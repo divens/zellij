@@ -443,3 +443,137 @@ pub fn get_cli_client_os_input() -> Result<ClientOsInputOutput, nix::Error> {
 }
 
 pub const DEFAULT_STDIN_POLL_TIMEOUT_MS: u64 = 10;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nix::pty::{openpty, Winsize};
+    use nix::sys::termios::{self, LocalFlags, InputFlags};
+    use nix::unistd::close;
+
+    struct TestPty {
+        master: RawFd,
+        slave: RawFd,
+    }
+
+    impl TestPty {
+        fn new() -> Self {
+            let res = openpty(None, None).expect("failed to create PTY pair");
+            TestPty {
+                master: res.master,
+                slave: res.slave,
+            }
+        }
+
+        fn new_with_size(cols: u16, rows: u16) -> Self {
+            let ws = Winsize {
+                ws_col: cols,
+                ws_row: rows,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            };
+            let res = openpty(Some(&ws), None).expect("failed to create PTY pair");
+            TestPty {
+                master: res.master,
+                slave: res.slave,
+            }
+        }
+    }
+
+    impl Drop for TestPty {
+        fn drop(&mut self) {
+            let _ = close(self.master);
+            let _ = close(self.slave);
+        }
+    }
+
+    #[test]
+    fn raw_mode_disables_canonical_and_echo() {
+        let pty = TestPty::new();
+
+        let orig = termios::tcgetattr(pty.slave).expect("tcgetattr");
+        assert!(
+            orig.local_flags.contains(LocalFlags::ICANON),
+            "new PTY should start in canonical mode"
+        );
+        assert!(
+            orig.local_flags.contains(LocalFlags::ECHO),
+            "new PTY should start with echo enabled"
+        );
+
+        into_raw_mode(pty.slave);
+
+        let raw = termios::tcgetattr(pty.slave).expect("tcgetattr after raw");
+        assert!(
+            !raw.local_flags.contains(LocalFlags::ICANON),
+            "raw mode should disable canonical processing"
+        );
+        assert!(
+            !raw.local_flags.contains(LocalFlags::ECHO),
+            "raw mode should disable echo"
+        );
+        assert!(
+            !raw.local_flags.contains(LocalFlags::ISIG),
+            "raw mode should disable signal generation"
+        );
+    }
+
+    #[test]
+    fn unset_raw_mode_restores_original_settings() {
+        let pty = TestPty::new();
+
+        let orig = termios::tcgetattr(pty.slave).expect("tcgetattr");
+
+        into_raw_mode(pty.slave);
+
+        // Verify we're in raw mode
+        let raw = termios::tcgetattr(pty.slave).expect("tcgetattr");
+        assert!(!raw.local_flags.contains(LocalFlags::ICANON));
+
+        unset_raw_mode(pty.slave, orig.clone()).expect("unset_raw_mode");
+
+        let restored = termios::tcgetattr(pty.slave).expect("tcgetattr after restore");
+        assert!(
+            restored.local_flags.contains(LocalFlags::ICANON),
+            "canonical mode should be restored"
+        );
+        assert!(
+            restored.local_flags.contains(LocalFlags::ECHO),
+            "echo should be restored"
+        );
+    }
+
+    #[test]
+    fn get_terminal_size_returns_correct_dimensions() {
+        let pty = TestPty::new_with_size(132, 43);
+        let size = get_terminal_size_using_fd(pty.master);
+        assert_eq!(size.cols, 132);
+        assert_eq!(size.rows, 43);
+    }
+
+    #[test]
+    fn get_terminal_size_falls_back_on_zero_dimensions() {
+        let pty = TestPty::new_with_size(0, 0);
+        let size = get_terminal_size_using_fd(pty.master);
+        // The implementation falls back to 80x24 when dimensions are 0
+        assert_eq!(size.cols, 80, "should fall back to 80 columns");
+        assert_eq!(size.rows, 24, "should fall back to 24 rows");
+    }
+
+    #[test]
+    fn raw_mode_disables_input_processing() {
+        let pty = TestPty::new();
+
+        into_raw_mode(pty.slave);
+
+        let raw = termios::tcgetattr(pty.slave).expect("tcgetattr");
+        assert!(
+            !raw.input_flags.contains(InputFlags::IXON),
+            "raw mode should disable software flow control"
+        );
+        assert!(
+            !raw.input_flags.contains(InputFlags::ICRNL),
+            "raw mode should disable CR-to-NL translation"
+        );
+    }
+}
