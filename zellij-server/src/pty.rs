@@ -1169,15 +1169,20 @@ impl Pty {
             .iter()
             .filter(|f| !f.already_running)
             .map(|f| f.run.clone());
-        let mut new_pane_pids: Vec<(u32, bool, Option<RunCommand>, Result<Box<dyn Read + Send>>)> = vec![]; // (terminal_id,
-                                                                                             // starts_held,
-                                                                                             // run_command,
-                                                                                             // file_descriptor)
+        let mut new_pane_pids: Vec<(u32, bool, Option<RunCommand>, Result<Box<dyn Read + Send>>)> =
+            vec![]; // (terminal_id,
+                    // starts_held,
+                    // run_command,
+                    // file_descriptor)
 
-        let mut new_floating_panes_pids: Vec<(u32, bool, Option<RunCommand>, Result<Box<dyn Read + Send>>)> =
-            vec![]; // same
-                    // as
-                    // new_pane_pids
+        let mut new_floating_panes_pids: Vec<(
+            u32,
+            bool,
+            Option<RunCommand>,
+            Result<Box<dyn Read + Send>>,
+        )> = vec![]; // same
+                     // as
+                     // new_pane_pids
 
         let mut originating_plugins_to_inform = vec![];
 
@@ -1290,16 +1295,11 @@ impl Pty {
                         let senders = self.bus.senders.clone();
                         let debug_to_file = self.debug_to_file;
                         async move {
-                            TerminalBytes::new(
-                                terminal_id,
-                                reader,
-                                senders,
-                                debug_to_file,
-                            )
-                            .listen()
-                            .await
-                            .context("failed to spawn terminals for layout")
-                            .fatal();
+                            TerminalBytes::new(terminal_id, reader, senders, debug_to_file)
+                                .listen()
+                                .await
+                                .context("failed to spawn terminals for layout")
+                                .fatal();
                         }
                     });
                     self.task_handles.insert(terminal_id, terminal_bytes);
@@ -1356,15 +1356,20 @@ impl Pty {
             .iter()
             .filter(|f| !f.already_running)
             .map(|f| f.run.clone());
-        let mut new_pane_pids: Vec<(u32, bool, Option<RunCommand>, Result<Box<dyn Read + Send>>)> = vec![]; // (terminal_id,
-                                                                                             // starts_held,
-                                                                                             // run_command,
-                                                                                             // file_descriptor)
+        let mut new_pane_pids: Vec<(u32, bool, Option<RunCommand>, Result<Box<dyn Read + Send>>)> =
+            vec![]; // (terminal_id,
+                    // starts_held,
+                    // run_command,
+                    // file_descriptor)
 
-        let mut new_floating_panes_pids: Vec<(u32, bool, Option<RunCommand>, Result<Box<dyn Read + Send>>)> =
-            vec![]; // same
-                    // as
-                    // new_pane_pids
+        let mut new_floating_panes_pids: Vec<(
+            u32,
+            bool,
+            Option<RunCommand>,
+            Result<Box<dyn Read + Send>>,
+        )> = vec![]; // same
+                     // as
+                     // new_pane_pids
 
         let mut originating_plugins_to_inform = vec![];
 
@@ -1458,16 +1463,11 @@ impl Pty {
                         let senders = self.bus.senders.clone();
                         let debug_to_file = self.debug_to_file;
                         async move {
-                            TerminalBytes::new(
-                                terminal_id,
-                                reader,
-                                senders,
-                                debug_to_file,
-                            )
-                            .listen()
-                            .await
-                            .context("failed to spawn terminals for layout")
-                            .fatal();
+                            TerminalBytes::new(terminal_id, reader, senders, debug_to_file)
+                                .listen()
+                                .await
+                                .context("failed to spawn terminals for layout")
+                                .fatal();
                         }
                     });
                     self.task_handles.insert(terminal_id, terminal_bytes);
@@ -1876,12 +1876,9 @@ impl Pty {
 
         for terminal_id in terminal_ids {
             let process_id = self.id_to_child_pid.get(&terminal_id);
-            let cwd = process_id
-                .and_then(|pid| pids_to_cwds.get(pid));
-            let cmd_sysinfo = process_id
-                .and_then(|pid| pids_to_cmds.get(pid));
-            let cmd_ps = process_id
-                .and_then(|pid| ppids_to_cmds.get(&format!("{}", pid)));
+            let cwd = process_id.and_then(|pid| pids_to_cwds.get(pid));
+            let cmd_sysinfo = process_id.and_then(|pid| pids_to_cmds.get(pid));
+            let cmd_ps = process_id.and_then(|pid| ppids_to_cmds.get(&format!("{}", pid)));
             if let Some(cmd) = cmd_ps {
                 terminal_ids_to_commands.insert(terminal_id, cmd.clone());
             } else if let Some(cmd) = cmd_sysinfo {
@@ -1989,8 +1986,7 @@ impl Pty {
 
         for terminal_id in terminal_ids {
             let process_id = self.id_to_child_pid.get(&terminal_id);
-            let cwd = process_id
-                .and_then(|pid| pids_to_cwds.get(pid));
+            let cwd = process_id.and_then(|pid| pids_to_cwds.get(pid));
 
             if let Some(cwd) = cwd {
                 if self.terminal_cwds.get(&terminal_id) != Some(cwd) {
@@ -2092,7 +2088,6 @@ impl Pty {
             PaneId::Terminal(terminal_id) => {
                 if let Some(&child_pid) = self.id_to_child_pid.get(&terminal_id) {
                     // Query OS for current running command
-                    let pid = Pid::from_raw(child_pid);
                     if let Some(os_input) = self.bus.os_input.as_ref() {
                         // First, try to get child process command (e.g., nvim running in bash)
                         let ppids_to_cmds =
@@ -2100,8 +2095,8 @@ impl Pty {
                         let cmd_ps = ppids_to_cmds.get(&format!("{}", child_pid));
 
                         // If no child process, fall back to parent process (e.g., the shell itself)
-                        let (_cwds, cmds) = os_input.get_cwds(vec![pid]);
-                        let cmd_sysinfo = cmds.get(&pid);
+                        let (_cwds, cmds) = os_input.get_cwds(vec![child_pid]);
+                        let cmd_sysinfo = cmds.get(&child_pid);
 
                         if let Some(command_args) = cmd_ps {
                             GetPaneRunningCommandResponse::Ok(command_args.clone())
@@ -2134,10 +2129,9 @@ impl Pty {
             PaneId::Terminal(terminal_id) => {
                 if let Some(&child_pid) = self.id_to_child_pid.get(&terminal_id) {
                     // Query OS for current working directory
-                    let pid = Pid::from_raw(child_pid);
                     if let Some(os_input) = self.bus.os_input.as_ref() {
-                        let (cwds, _cmds) = os_input.get_cwds(vec![pid]);
-                        if let Some(cwd) = cwds.get(&pid) {
+                        let (cwds, _cmds) = os_input.get_cwds(vec![child_pid]);
+                        if let Some(cwd) = cwds.get(&child_pid) {
                             GetPaneCwdResponse::Ok(cwd.clone())
                         } else {
                             GetPaneCwdResponse::Err(format!(

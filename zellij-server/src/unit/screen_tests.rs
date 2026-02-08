@@ -1,11 +1,8 @@
 use super::{screen_thread_main, CopyOptions, Screen, ScreenInstruction};
 use crate::panes::PaneId;
 use crate::{
-    channels::SenderWithContext,
-    os_input_output::ServerOsApi,
-    route::route_action,
-    thread_bus::Bus,
-    ClientId, ServerInstruction, SessionMetaData, ThreadSenders,
+    channels::SenderWithContext, os_input_output::ServerOsApi, route::route_action,
+    thread_bus::Bus, ClientId, ServerInstruction, SessionMetaData, ThreadSenders,
 };
 use insta::assert_snapshot;
 use std::net::{IpAddr, Ipv4Addr};

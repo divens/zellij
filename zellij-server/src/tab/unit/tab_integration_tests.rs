@@ -4,12 +4,8 @@ use crate::screen::CopyOptions;
 use crate::Arc;
 
 use crate::{
-    os_input_output::ServerOsApi,
-    pane_groups::PaneGroups,
-    panes::PaneId,
-    plugins::PluginInstruction,
-    thread_bus::ThreadSenders,
-    ClientId,
+    os_input_output::ServerOsApi, pane_groups::PaneGroups, panes::PaneId,
+    plugins::PluginInstruction, thread_bus::ThreadSenders, ClientId,
 };
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;

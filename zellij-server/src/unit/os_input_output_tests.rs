@@ -110,17 +110,13 @@ fn pty_resize() {
         .expect("resize should succeed");
 
     // Verify via get_size
-    let size = result
-        .pty
-        .get_size()
-        .expect("get_size should succeed");
+    let size = result.pty.get_size().expect("get_size should succeed");
     assert_eq!(size.cols, 160, "columns should be 160 after resize");
     assert_eq!(size.rows, 48, "rows should be 48 after resize");
 
     // Cleanup: kill the sleep process
     if let Some(pid) = result.child_pid {
-        let _ =
-            zellij_os::process::signal_process(pid, zellij_os::process::ProcessSignal::Kill);
+        let _ = zellij_os::process::signal_process(pid, zellij_os::process::ProcessSignal::Kill);
     }
     let _ = done_rx.recv_timeout(std::time::Duration::from_secs(5));
 }
@@ -168,8 +164,7 @@ fn resize_through_server_api() {
 
     // Cleanup
     if let Some(pid) = result.child_pid {
-        let _ =
-            zellij_os::process::signal_process(pid, zellij_os::process::ProcessSignal::Kill);
+        let _ = zellij_os::process::signal_process(pid, zellij_os::process::ProcessSignal::Kill);
     }
     let _ = done_rx.recv_timeout(std::time::Duration::from_secs(5));
 }
@@ -192,8 +187,7 @@ fn kill_sends_sighup_to_process() {
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // Verify the process was killed by trying to signal it (should fail if dead)
-    let result =
-        zellij_os::process::signal_process(pid, zellij_os::process::ProcessSignal::HangUp);
+    let result = zellij_os::process::signal_process(pid, zellij_os::process::ProcessSignal::HangUp);
     // Process may or may not still exist at this point (race), but the important
     // thing is that kill() didn't error
 }
@@ -268,8 +262,7 @@ fn write_through_server_os_api() {
 
     // Cleanup
     if let Some(pid) = child_pid {
-        let _ =
-            zellij_os::process::signal_process(pid, zellij_os::process::ProcessSignal::Kill);
+        let _ = zellij_os::process::signal_process(pid, zellij_os::process::ProcessSignal::Kill);
     }
     let _ = done_rx.recv_timeout(std::time::Duration::from_secs(5));
 }
@@ -334,8 +327,7 @@ fn cached_resizes_are_applied() {
 
     // Cleanup
     if let Some(pid) = child_pid {
-        let _ =
-            zellij_os::process::signal_process(pid, zellij_os::process::ProcessSignal::Kill);
+        let _ = zellij_os::process::signal_process(pid, zellij_os::process::ProcessSignal::Kill);
     }
     let _ = done_rx.recv_timeout(std::time::Duration::from_secs(5));
 }

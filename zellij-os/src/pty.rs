@@ -63,9 +63,7 @@ impl PtyHandle {
             .writer
             .as_mut()
             .context("PTY writer has already been taken")?;
-        writer
-            .write(buf)
-            .context("failed to write to PTY")
+        writer.write(buf).context("failed to write to PTY")
     }
 
     /// Flush the PTY writer, ensuring all buffered data is sent.
@@ -74,9 +72,7 @@ impl PtyHandle {
             .writer
             .as_mut()
             .context("PTY writer has already been taken")?;
-        writer
-            .flush()
-            .context("failed to drain PTY")
+        writer.flush().context("failed to drain PTY")
     }
 }
 
@@ -138,12 +134,7 @@ pub fn spawn_in_pty(
         .slave
         .spawn_command(command)
         .map_err(|e| anyhow::anyhow!("{}", e))
-        .with_context(|| {
-            format!(
-                "failed to spawn command '{}'",
-                cmd.to_string_lossy()
-            )
-        })?;
+        .with_context(|| format!("failed to spawn command '{}'", cmd.to_string_lossy()))?;
 
     let child_pid = child.process_id();
 
