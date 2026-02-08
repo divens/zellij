@@ -38,7 +38,7 @@ use crate::{
 };
 use zellij_utils::ipc::PixelDimensions;
 
-use interprocess::local_socket::LocalSocketStream;
+use interprocess::local_socket::Stream as LocalSocketStream;
 use zellij_utils::{
     channels::{self, ChannelWithContext, Receiver},
     data::{

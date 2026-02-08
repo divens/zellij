@@ -2,7 +2,7 @@ use crate::ipc::{
     ClientToServerMsg, IpcReceiverWithContext, IpcSenderWithContext, ServerToClientMsg,
 };
 use crate::pane_size::Size;
-use interprocess::local_socket::{LocalSocketListener, LocalSocketStream};
+use interprocess::local_socket::{prelude::*, GenericFilePath, ListenerOptions, Stream as LocalSocketStream};
 use std::os::unix::fs::FileTypeExt;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -16,12 +16,12 @@ fn socket_path() -> (TempDir, PathBuf) {
 #[test]
 fn client_to_server_message_over_socket() {
     let (_dir, path) = socket_path();
-    let listener = LocalSocketListener::bind(&*path).expect("bind failed");
+    let listener = ListenerOptions::new().name(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).create_sync().expect("bind failed");
 
     let client = std::thread::spawn({
         let path = path.clone();
         move || {
-            let stream = LocalSocketStream::connect(&*path).expect("connect failed");
+            let stream = LocalSocketStream::connect(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).expect("connect failed");
             let mut sender: IpcSenderWithContext<ClientToServerMsg> =
                 IpcSenderWithContext::new(stream);
             sender
@@ -49,7 +49,7 @@ fn client_to_server_message_over_socket() {
 #[test]
 fn server_to_client_message_over_socket() {
     let (_dir, path) = socket_path();
-    let listener = LocalSocketListener::bind(&*path).expect("bind failed");
+    let listener = ListenerOptions::new().name(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).create_sync().expect("bind failed");
 
     let server = std::thread::spawn(move || {
         let stream = listener.incoming().next().unwrap().expect("accept failed");
@@ -60,7 +60,7 @@ fn server_to_client_message_over_socket() {
             .expect("send failed");
     });
 
-    let stream = LocalSocketStream::connect(&*path).expect("connect failed");
+    let stream = LocalSocketStream::connect(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).expect("connect failed");
     let mut receiver: IpcReceiverWithContext<ServerToClientMsg> =
         IpcReceiverWithContext::new(stream);
 
@@ -79,7 +79,7 @@ fn server_to_client_message_over_socket() {
 #[test]
 fn bidirectional_communication_via_fd_duplication() {
     let (_dir, path) = socket_path();
-    let listener = LocalSocketListener::bind(&*path).expect("bind failed");
+    let listener = ListenerOptions::new().name(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).create_sync().expect("bind failed");
 
     let server = std::thread::spawn(move || {
         let stream = listener.incoming().next().unwrap().expect("accept failed");
@@ -102,7 +102,7 @@ fn bidirectional_communication_via_fd_duplication() {
         );
     });
 
-    let stream = LocalSocketStream::connect(&*path).expect("connect failed");
+    let stream = LocalSocketStream::connect(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).expect("connect failed");
     let mut sender: IpcSenderWithContext<ClientToServerMsg> = IpcSenderWithContext::new(stream);
 
     // Create a receiver from the same socket via dup()
@@ -126,12 +126,12 @@ fn bidirectional_communication_via_fd_duplication() {
 #[test]
 fn multiple_messages_in_sequence() {
     let (_dir, path) = socket_path();
-    let listener = LocalSocketListener::bind(&*path).expect("bind failed");
+    let listener = ListenerOptions::new().name(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).create_sync().expect("bind failed");
 
     let client = std::thread::spawn({
         let path = path.clone();
         move || {
-            let stream = LocalSocketStream::connect(&*path).expect("connect failed");
+            let stream = LocalSocketStream::connect(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).expect("connect failed");
             let mut sender: IpcSenderWithContext<ClientToServerMsg> =
                 IpcSenderWithContext::new(stream);
 
@@ -174,12 +174,12 @@ fn multiple_messages_in_sequence() {
 #[test]
 fn receiver_returns_none_on_closed_connection() {
     let (_dir, path) = socket_path();
-    let listener = LocalSocketListener::bind(&*path).expect("bind failed");
+    let listener = ListenerOptions::new().name(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).create_sync().expect("bind failed");
 
     let client = std::thread::spawn({
         let path = path.clone();
         move || {
-            let stream = LocalSocketStream::connect(&*path).expect("connect failed");
+            let stream = LocalSocketStream::connect(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).expect("connect failed");
             let mut sender: IpcSenderWithContext<ClientToServerMsg> =
                 IpcSenderWithContext::new(stream);
             sender
@@ -211,7 +211,7 @@ fn receiver_returns_none_on_closed_connection() {
 #[test]
 fn is_socket_identifies_bound_unix_socket() {
     let (_dir, path) = socket_path();
-    let _listener = LocalSocketListener::bind(&*path).expect("bind failed");
+    let _listener = ListenerOptions::new().name(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).create_sync().expect("bind failed");
 
     let metadata = std::fs::metadata(&path).expect("metadata failed");
     assert!(
@@ -238,7 +238,7 @@ fn session_probe_accepts_responding_socket() {
     // Simulates the assert_socket() pattern from sessions.rs:
     // A real Zellij server responds to ConnStatus with Connected.
     let (_dir, path) = socket_path();
-    let listener = LocalSocketListener::bind(&*path).expect("bind failed");
+    let listener = ListenerOptions::new().name(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).create_sync().expect("bind failed");
 
     // Spawn a fake "server" that responds to ConnStatus with Connected
     let server = std::thread::spawn(move || {
@@ -259,7 +259,7 @@ fn session_probe_accepts_responding_socket() {
     });
 
     // Client-side probing (mirrors assert_socket in sessions.rs)
-    let stream = LocalSocketStream::connect(&*path).expect("connect failed");
+    let stream = LocalSocketStream::connect(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).expect("connect failed");
     let mut sender: IpcSenderWithContext<ClientToServerMsg> = IpcSenderWithContext::new(stream);
     sender
         .send_client_msg(ClientToServerMsg::ConnStatus)
@@ -283,11 +283,11 @@ fn session_probe_rejects_dead_socket() {
 
     // Bind and immediately drop the listener to create a stale socket file
     {
-        let _listener = LocalSocketListener::bind(&*path).expect("bind failed");
+        let _listener = ListenerOptions::new().name(path.as_path().to_fs_name::<GenericFilePath>().unwrap()).create_sync().expect("bind failed");
     }
     // Listener is dropped — the socket file may still exist but nobody is listening
 
-    let result = LocalSocketStream::connect(&*path);
+    let result = LocalSocketStream::connect(path.as_path().to_fs_name::<GenericFilePath>().unwrap());
     assert!(
         result.is_err(),
         "connecting to a dead socket should fail (no listener)"
@@ -301,7 +301,7 @@ fn socket_directory_enumeration_finds_sockets() {
 
     // Create a socket
     let sock_path = dir.path().join("test-session");
-    let _listener = LocalSocketListener::bind(&*sock_path).expect("bind failed");
+    let _listener = ListenerOptions::new().name(sock_path.as_path().to_fs_name::<GenericFilePath>().unwrap()).create_sync().expect("bind failed");
 
     // Create a regular file (should be filtered out)
     let file_path = dir.path().join("not-a-session");
