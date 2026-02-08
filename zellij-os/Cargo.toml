@@ -1,0 +1,14 @@
+[package]
+name = "zellij-os"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cross-platform OS abstraction layer for Zellij"
+
+[dependencies]
+anyhow = { workspace = true }
+portable-pty = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }

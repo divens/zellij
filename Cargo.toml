@@ -53,6 +53,7 @@ members = [
     "default-plugins/sequence",
     "default-plugins/layout-manager",
     "zellij-client",
+    "zellij-os",
     "zellij-server",
     "zellij-utils",
     "zellij-tile",
@@ -89,6 +90,7 @@ miette = { version = "5.7.0", default-features = false, features = ["fancy"] }
 nix = { version = "0.23.1", default-features = false }
 notify-debouncer-full = { version = "0.3.1", default-features = false }
 notify = { version = "6.1.1", default-features = false, features = ["macos_kqueue"] }
+portable-pty = { version = "0.8", default-features = false }
 prost = { version = "0.11.9", default-features = false, features = ["std", "prost-derive"] }
 regex = { version = "1.5.5", default-features = false, features = ["perf", "std"] }
 serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
@@ -109,6 +111,7 @@ vte = { version = "0.11.0", default-features = false }
 names = { version = "0.14.0", default-features = false }
 include_dir = { version = "0.7.3", default-features = false }
 sha2 = { version = "0.10", default-features = false }
+zellij-os = { path = "zellij-os/", version = "0.44.0" }
 zellij-utils = { path = "zellij-utils/", version = "0.44.0" }
 
 [profile.dev-opt]

@@ -3,7 +3,7 @@ use crate::pane_groups::PaneGroups;
 use crate::panes::sixel::SixelImageStore;
 use crate::screen::CopyOptions;
 use crate::{
-    os_input_output::{AsyncReader, Pid, ServerOsApi},
+    os_input_output::ServerOsApi,
     panes::PaneId,
     thread_bus::ThreadSenders,
     ClientId,
@@ -18,7 +18,7 @@ use zellij_utils::pane_size::{Size, SizeInPixels};
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::os::unix::io::RawFd;
+use std::io::Read;
 use std::rc::Rc;
 
 use interprocess::local_socket::LocalSocketStream;
@@ -46,15 +46,9 @@ impl ServerOsApi for FakeInputOutput {
     fn spawn_terminal(
         &self,
         _file_to_open: TerminalAction,
-        _quit_cb: Box<dyn Fn(PaneId, Option<i32>, RunCommand) + Send>,
+        _quit_cb: Box<dyn Fn(PaneId, Option<i32>, RunCommand) + Send + Sync>,
         _default_editor: Option<PathBuf>,
-    ) -> Result<(u32, RawFd, RawFd)> {
-        unimplemented!()
-    }
-    fn read_from_tty_stdout(&self, _fd: RawFd, _buf: &mut [u8]) -> Result<usize> {
-        unimplemented!()
-    }
-    fn async_file_reader(&self, _fd: RawFd) -> Box<dyn AsyncReader> {
+    ) -> Result<(u32, Box<dyn Read + Send>, Option<u32>)> {
         unimplemented!()
     }
     fn write_to_tty_stdin(&self, _id: u32, _buf: &[u8]) -> Result<usize> {
@@ -63,10 +57,10 @@ impl ServerOsApi for FakeInputOutput {
     fn tcdrain(&self, _id: u32) -> Result<()> {
         unimplemented!()
     }
-    fn kill(&self, _pid: Pid) -> Result<()> {
+    fn kill(&self, _pid: u32) -> Result<()> {
         unimplemented!()
     }
-    fn force_kill(&self, _pid: Pid) -> Result<()> {
+    fn force_kill(&self, _pid: u32) -> Result<()> {
         unimplemented!()
     }
     fn box_clone(&self) -> Box<dyn ServerOsApi> {
@@ -88,7 +82,7 @@ impl ServerOsApi for FakeInputOutput {
     fn load_palette(&self) -> Palette {
         unimplemented!()
     }
-    fn get_cwd(&self, _pid: Pid) -> Option<PathBuf> {
+    fn get_cwd(&self, _pid: u32) -> Option<PathBuf> {
         unimplemented!()
     }
 
@@ -99,14 +93,14 @@ impl ServerOsApi for FakeInputOutput {
         &self,
         _terminal_id: u32,
         _run_command: RunCommand,
-        _quit_cb: Box<dyn Fn(PaneId, Option<i32>, RunCommand) + Send>, // u32 is the exit status
-    ) -> Result<(RawFd, RawFd)> {
+        _quit_cb: Box<dyn Fn(PaneId, Option<i32>, RunCommand) + Send + Sync>,
+    ) -> Result<(Box<dyn Read + Send>, Option<u32>)> {
         unimplemented!()
     }
     fn clear_terminal_id(&self, _terminal_id: u32) -> Result<()> {
         unimplemented!()
     }
-    fn send_sigint(&self, pid: Pid) -> Result<()> {
+    fn send_sigint(&self, _pid: u32) -> Result<()> {
         unimplemented!()
     }
 }
