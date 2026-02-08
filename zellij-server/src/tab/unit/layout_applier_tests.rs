@@ -13,7 +13,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use interprocess::local_socket::LocalSocketStream;
+use interprocess::local_socket::Stream as LocalSocketStream;
 use zellij_utils::{
     channels::{self, ChannelWithContext, Receiver, SenderWithContext},
     data::{ModeInfo, Palette, Style},
