@@ -1,11 +1,12 @@
 use crate::{
-    os_input_output::{AsyncReader, ServerOsApi},
+    os_input_output::AsyncReader,
     screen::ScreenInstruction,
     thread_bus::ThreadSenders,
 };
 use async_std::task;
 use std::{
-    os::unix::io::RawFd,
+    io::Read,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use zellij_utils::{
@@ -13,8 +14,33 @@ use zellij_utils::{
     logging::debug_to_file,
 };
 
+/// An `AsyncReader` that wraps a sync `Box<dyn Read + Send>` by offloading
+/// blocking reads to the async runtime's blocking thread pool via `spawn_blocking`.
+/// This prevents PTY reads from starving async worker threads.
+struct SyncReadAsyncReader {
+    reader: Arc<Mutex<Box<dyn Read + Send>>>,
+}
+
+#[async_trait::async_trait]
+impl AsyncReader for SyncReadAsyncReader {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
+        let reader = self.reader.clone();
+        let buf_len = buf.len();
+        let (n, data) = task::spawn_blocking(move || {
+            let mut reader_guard = reader.lock().unwrap();
+            let mut temp_buf = vec![0u8; buf_len];
+            match reader_guard.read(&mut temp_buf) {
+                Ok(n) => Ok((n, temp_buf)),
+                Err(e) => Err(e),
+            }
+        })
+        .await?;
+        buf[..n].copy_from_slice(&data[..n]);
+        Ok(n)
+    }
+}
+
 pub(crate) struct TerminalBytes {
-    pid: RawFd,
     terminal_id: u32,
     senders: ThreadSenders,
     async_reader: Box<dyn AsyncReader>,
@@ -23,18 +49,18 @@ pub(crate) struct TerminalBytes {
 
 impl TerminalBytes {
     pub fn new(
-        pid: RawFd,
-        senders: ThreadSenders,
-        os_input: Box<dyn ServerOsApi>,
-        debug: bool,
         terminal_id: u32,
+        reader: Box<dyn Read + Send>,
+        senders: ThreadSenders,
+        debug: bool,
     ) -> Self {
         TerminalBytes {
-            pid,
             terminal_id,
             senders,
             debug,
-            async_reader: os_input.async_file_reader(pid),
+            async_reader: Box::new(SyncReadAsyncReader {
+                reader: Arc::new(Mutex::new(reader)),
+            }),
         }
     }
     pub async fn listen(&mut self) -> Result<()> {
@@ -64,7 +90,7 @@ impl TerminalBytes {
                 Ok(n_bytes) => {
                     let bytes = &buf[..n_bytes];
                     if self.debug {
-                        let _ = debug_to_file(bytes, self.pid);
+                        let _ = debug_to_file(bytes, self.terminal_id as i32);
                     }
                     self.async_send_to_screen(ScreenInstruction::PtyBytes(
                         self.terminal_id,
