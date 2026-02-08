@@ -5486,11 +5486,13 @@ version = "0.44.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "crossterm",
  "log",
  "nix 0.23.1",
  "portable-pty",
  "signal-hook",
  "tokio",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
