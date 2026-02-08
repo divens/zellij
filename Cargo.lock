@@ -5467,7 +5467,6 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "serial_test",
- "signal-hook",
  "termwiz",
  "time",
  "tokio",
@@ -5477,6 +5476,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "zellij-os",
  "zellij-utils",
 ]
 
@@ -5485,9 +5485,12 @@ name = "zellij-os"
 version = "0.44.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "log",
  "nix 0.23.1",
  "portable-pty",
+ "signal-hook",
+ "tokio",
 ]
 
 [[package]]
@@ -5524,7 +5527,6 @@ dependencies = [
  "semver 0.11.0",
  "serde",
  "serde_json",
- "signal-hook",
  "sixel-image",
  "sixel-tokenizer",
  "sysinfo",

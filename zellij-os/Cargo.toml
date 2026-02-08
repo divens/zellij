@@ -7,8 +7,11 @@ description = "Cross-platform OS abstraction layer for Zellij"
 
 [dependencies]
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 portable-pty = { workspace = true }
 log = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }
+signal-hook = { workspace = true }
+tokio = { workspace = true }
