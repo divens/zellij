@@ -622,6 +622,7 @@ impl ServerOsApi for ServerOsInputOutput {
 
         (cwds, cmds)
     }
+    #[cfg(unix)]
     fn get_all_cmds_by_ppid(&self, post_hook: &Option<String>) -> HashMap<String, Vec<String>> {
         // the key is the stringified ppid
         let mut cmds = HashMap::new();
@@ -663,6 +664,44 @@ impl ServerOsApi for ServerOsInputOutput {
                             cmds.insert(ppid.into(), line_parts.collect());
                         },
                     }
+                }
+            }
+        }
+        cmds
+    }
+
+    #[cfg(not(unix))]
+    fn get_all_cmds_by_ppid(&self, post_hook: &Option<String>) -> HashMap<String, Vec<String>> {
+        let mut system_info = System::new();
+        system_info.refresh_processes();
+        let mut cmds = HashMap::new();
+        for (_pid, process) in system_info.processes() {
+            if let Some(parent_pid) = process.parent() {
+                let ppid_str = format!("{}", parent_pid);
+                let command: Vec<String> = process.cmd().to_vec();
+                if command.is_empty() {
+                    continue;
+                }
+                match post_hook {
+                    Some(post_hook) => {
+                        let stringified = command.join(" ");
+                        let cmd = match run_command_hook(&stringified, post_hook) {
+                            Ok(command) => command,
+                            Err(e) => {
+                                log::error!("Post command hook failed to run: {}", e);
+                                stringified.to_owned()
+                            },
+                        };
+                        let line_parts: Vec<String> = cmd
+                            .trim()
+                            .split_ascii_whitespace()
+                            .map(|p| p.to_owned())
+                            .collect();
+                        cmds.insert(ppid_str, line_parts);
+                    },
+                    None => {
+                        cmds.insert(ppid_str, command);
+                    },
                 }
             }
         }
@@ -778,16 +817,7 @@ fn run_command_hook(
     original_command: &str,
     hook_script: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(hook_script)
-        .env("RESURRECT_COMMAND", original_command)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(format!("Hook failed: {}", String::from_utf8_lossy(&output.stderr)).into());
-    }
-    Ok(String::from_utf8(output.stdout)?.trim().to_string())
+    zellij_os::shell::run_shell_command(hook_script, &[("RESURRECT_COMMAND", original_command)])
 }
 
 #[cfg(test)]
