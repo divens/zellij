@@ -14,9 +14,9 @@ use async_std::{
     self,
     task::{self, JoinHandle},
 };
-use nix::unistd::Pid;
+use std::io::Read;
 use std::sync::Arc;
-use std::{collections::HashMap, os::unix::io::RawFd, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 use zellij_utils::{
     data::{
         CommandOrPlugin, Event, FloatingPaneCoordinates, GetPaneCwdResponse, GetPanePidResponse,
@@ -195,7 +195,7 @@ impl From<&PtyInstruction> for PtyContext {
 pub(crate) struct Pty {
     pub active_panes: HashMap<ClientId, PaneId>,
     pub bus: Bus<PtyInstruction>,
-    pub id_to_child_pid: HashMap<u32, RawFd>, // terminal_id => child raw fd
+    pub id_to_child_pid: HashMap<u32, u32>, // terminal_id => child pid
     originating_plugins: HashMap<u32, OriginatingPlugin>,
     debug_to_file: bool,
     task_handles: HashMap<u32, JoinHandle<()>>, // terminal_id to join-handle
@@ -962,7 +962,7 @@ impl Pty {
                                     self.bus
                                         .os_input
                                         .as_ref()
-                                        .and_then(|input| input.get_cwd(Pid::from_raw(pid)))
+                                        .and_then(|input| input.get_cwd(pid))
                                 })
                                 .or_else(|| self.terminal_cwds.get(id).cloned())
                         },
@@ -982,7 +982,7 @@ impl Pty {
                                 self.bus
                                     .os_input
                                     .as_ref()
-                                    .and_then(|input| input.get_cwd(Pid::from_raw(pid)))
+                                    .and_then(|input| input.get_cwd(pid))
                             })
                             .or_else(|| self.terminal_cwds.get(terminal_pane_id).cloned())
                     },
@@ -1096,7 +1096,7 @@ impl Pty {
                 }
             }
         });
-        let (terminal_id, pid_primary, child_fd): (u32, RawFd, RawFd) = self
+        let (terminal_id, reader, child_pid): (u32, Box<dyn Read + Send>, Option<u32>) = self
             .bus
             .os_input
             .as_mut()
@@ -1109,16 +1109,9 @@ impl Pty {
             let err_context =
                 |terminal_id: u32| format!("failed to run async task for terminal {terminal_id}");
             let senders = self.bus.senders.clone();
-            let os_input = self
-                .bus
-                .os_input
-                .as_ref()
-                .with_context(|| err_context(terminal_id))
-                .fatal()
-                .clone();
             let debug_to_file = self.debug_to_file;
             async move {
-                TerminalBytes::new(pid_primary, senders, os_input, debug_to_file, terminal_id)
+                TerminalBytes::new(terminal_id, reader, senders, debug_to_file)
                     .listen()
                     .await
                     .with_context(|| err_context(terminal_id))
@@ -1127,8 +1120,10 @@ impl Pty {
         });
 
         self.task_handles.insert(terminal_id, terminal_bytes);
-        self.id_to_child_pid.insert(terminal_id, child_fd);
-        self.capture_initial_cwd(terminal_id, child_fd);
+        if let Some(child_pid) = child_pid {
+            self.id_to_child_pid.insert(terminal_id, child_pid);
+            self.capture_initial_cwd(terminal_id, child_pid);
+        }
 
         let starts_held = false;
         Ok((terminal_id, starts_held))
@@ -1174,12 +1169,12 @@ impl Pty {
             .iter()
             .filter(|f| !f.already_running)
             .map(|f| f.run.clone());
-        let mut new_pane_pids: Vec<(u32, bool, Option<RunCommand>, Result<RawFd>)> = vec![]; // (terminal_id,
+        let mut new_pane_pids: Vec<(u32, bool, Option<RunCommand>, Result<Box<dyn Read + Send>>)> = vec![]; // (terminal_id,
                                                                                              // starts_held,
                                                                                              // run_command,
                                                                                              // file_descriptor)
 
-        let mut new_floating_panes_pids: Vec<(u32, bool, Option<RunCommand>, Result<RawFd>)> =
+        let mut new_floating_panes_pids: Vec<(u32, bool, Option<RunCommand>, Result<Box<dyn Read + Send>>)> =
             vec![]; // same
                     // as
                     // new_pane_pids
@@ -1284,29 +1279,22 @@ impl Pty {
 
         terminals_to_start.append(&mut new_pane_pids);
         terminals_to_start.append(&mut new_floating_panes_pids);
-        for (terminal_id, starts_held, run_command, pid_primary) in terminals_to_start {
+        for (terminal_id, starts_held, run_command, reader_result) in terminals_to_start {
             if starts_held {
                 // we do not run a command or start listening for bytes on held panes
                 continue;
             }
-            match pid_primary {
-                Ok(pid_primary) => {
+            match reader_result {
+                Ok(reader) => {
                     let terminal_bytes = task::spawn({
                         let senders = self.bus.senders.clone();
-                        let os_input = self
-                            .bus
-                            .os_input
-                            .as_ref()
-                            .with_context(err_context)?
-                            .clone();
                         let debug_to_file = self.debug_to_file;
                         async move {
                             TerminalBytes::new(
-                                pid_primary,
-                                senders,
-                                os_input,
-                                debug_to_file,
                                 terminal_id,
+                                reader,
+                                senders,
+                                debug_to_file,
                             )
                             .listen()
                             .await
@@ -1368,12 +1356,12 @@ impl Pty {
             .iter()
             .filter(|f| !f.already_running)
             .map(|f| f.run.clone());
-        let mut new_pane_pids: Vec<(u32, bool, Option<RunCommand>, Result<RawFd>)> = vec![]; // (terminal_id,
+        let mut new_pane_pids: Vec<(u32, bool, Option<RunCommand>, Result<Box<dyn Read + Send>>)> = vec![]; // (terminal_id,
                                                                                              // starts_held,
                                                                                              // run_command,
                                                                                              // file_descriptor)
 
-        let mut new_floating_panes_pids: Vec<(u32, bool, Option<RunCommand>, Result<RawFd>)> =
+        let mut new_floating_panes_pids: Vec<(u32, bool, Option<RunCommand>, Result<Box<dyn Read + Send>>)> =
             vec![]; // same
                     // as
                     // new_pane_pids
@@ -1459,29 +1447,22 @@ impl Pty {
 
         terminals_to_start.append(&mut new_pane_pids);
         terminals_to_start.append(&mut new_floating_panes_pids);
-        for (terminal_id, starts_held, run_command, pid_primary) in terminals_to_start {
+        for (terminal_id, starts_held, run_command, reader_result) in terminals_to_start {
             if starts_held {
                 // we do not run a command or start listening for bytes on held panes
                 continue;
             }
-            match pid_primary {
-                Ok(pid_primary) => {
+            match reader_result {
+                Ok(reader) => {
                     let terminal_bytes = task::spawn({
                         let senders = self.bus.senders.clone();
-                        let os_input = self
-                            .bus
-                            .os_input
-                            .as_ref()
-                            .with_context(err_context)?
-                            .clone();
                         let debug_to_file = self.debug_to_file;
                         async move {
                             TerminalBytes::new(
-                                pid_primary,
-                                senders,
-                                os_input,
-                                debug_to_file,
                                 terminal_id,
+                                reader,
+                                senders,
+                                debug_to_file,
                             )
                             .listen()
                             .await
@@ -1539,7 +1520,7 @@ impl Pty {
         &mut self,
         run_instruction: Option<Run>,
         default_shell: TerminalAction,
-    ) -> Result<Option<(u32, bool, Option<RunCommand>, Result<i32>)>> {
+    ) -> Result<Option<(u32, bool, Option<RunCommand>, Result<Box<dyn Read + Send>>)>> {
         // terminal_id,
         // starts_held,
         // command
@@ -1600,8 +1581,7 @@ impl Pty {
                                 terminal_id,
                                 starts_held,
                                 Some(command.clone()),
-                                Ok(terminal_id as i32), // this is not actually correct but gets
-                                                        // stripped later
+                                Ok(Box::new(std::io::empty()) as Box<dyn Read + Send>), // placeholder, never used for held panes
                             )))
                         },
                         Err(e) => Err(e),
@@ -1616,14 +1596,16 @@ impl Pty {
                         .spawn_terminal(cmd, quit_cb, self.default_editor.clone())
                         .with_context(err_context)
                     {
-                        Ok((terminal_id, pid_primary, child_fd)) => {
-                            self.id_to_child_pid.insert(terminal_id, child_fd);
-                            self.capture_initial_cwd(terminal_id, child_fd);
+                        Ok((terminal_id, reader, child_pid)) => {
+                            if let Some(child_pid) = child_pid {
+                                self.id_to_child_pid.insert(terminal_id, child_pid);
+                                self.capture_initial_cwd(terminal_id, child_pid);
+                            }
                             Ok(Some((
                                 terminal_id,
                                 starts_held,
                                 Some(command.clone()),
-                                Ok(pid_primary),
+                                Ok(reader),
                             )))
                         },
                         Err(err) => {
@@ -1649,10 +1631,12 @@ impl Pty {
                     .spawn_terminal(shell, quit_cb, self.default_editor.clone())
                     .with_context(err_context)
                 {
-                    Ok((terminal_id, pid_primary, child_fd)) => {
-                        self.id_to_child_pid.insert(terminal_id, child_fd);
-                        self.capture_initial_cwd(terminal_id, child_fd);
-                        Ok(Some((terminal_id, starts_held, None, Ok(pid_primary))))
+                    Ok((terminal_id, reader, child_pid)) => {
+                        if let Some(child_pid) = child_pid {
+                            self.id_to_child_pid.insert(terminal_id, child_pid);
+                            self.capture_initial_cwd(terminal_id, child_pid);
+                        }
+                        Ok(Some((terminal_id, starts_held, None, Ok(reader))))
                     },
                     Err(err) => match err.downcast_ref::<ZellijError>() {
                         Some(ZellijError::CommandNotFound { terminal_id, .. }) => {
@@ -1681,10 +1665,12 @@ impl Pty {
                     )
                     .with_context(err_context)
                 {
-                    Ok((terminal_id, pid_primary, child_fd)) => {
-                        self.id_to_child_pid.insert(terminal_id, child_fd);
-                        self.capture_initial_cwd(terminal_id, child_fd);
-                        Ok(Some((terminal_id, starts_held, None, Ok(pid_primary))))
+                    Ok((terminal_id, reader, child_pid)) => {
+                        if let Some(child_pid) = child_pid {
+                            self.id_to_child_pid.insert(terminal_id, child_pid);
+                            self.capture_initial_cwd(terminal_id, child_pid);
+                        }
+                        Ok(Some((terminal_id, starts_held, None, Ok(reader))))
                     },
                     Err(err) => match err.downcast_ref::<ZellijError>() {
                         Some(ZellijError::CommandNotFound { terminal_id, .. }) => {
@@ -1705,10 +1691,12 @@ impl Pty {
                     .spawn_terminal(default_shell.clone(), quit_cb, self.default_editor.clone())
                     .with_context(err_context)
                 {
-                    Ok((terminal_id, pid_primary, child_fd)) => {
-                        self.id_to_child_pid.insert(terminal_id, child_fd);
-                        self.capture_initial_cwd(terminal_id, child_fd);
-                        Ok(Some((terminal_id, starts_held, None, Ok(pid_primary))))
+                    Ok((terminal_id, reader, child_pid)) => {
+                        if let Some(child_pid) = child_pid {
+                            self.id_to_child_pid.insert(terminal_id, child_pid);
+                            self.capture_initial_cwd(terminal_id, child_pid);
+                        }
+                        Ok(Some((terminal_id, starts_held, None, Ok(reader))))
                     },
                     Err(err) => match err.downcast_ref::<ZellijError>() {
                         Some(ZellijError::CommandNotFound { terminal_id, .. }) => {
@@ -1727,7 +1715,7 @@ impl Pty {
         match id {
             PaneId::Terminal(id) => {
                 self.task_handles.remove(&id);
-                if let Some(child_fd) = self.id_to_child_pid.remove(&id) {
+                if let Some(child_pid) = self.id_to_child_pid.remove(&id) {
                     task::block_on(async {
                         let err_context = || format!("failed to run async task for pane {id}");
                         self.bus
@@ -1735,7 +1723,7 @@ impl Pty {
                             .as_mut()
                             .with_context(err_context)
                             .fatal()
-                            .kill(Pid::from_raw(child_fd))
+                            .kill(child_pid)
                             .with_context(err_context)
                             .fatal();
                     });
@@ -1817,7 +1805,7 @@ impl Pty {
                         }
                     }
                 });
-                let (pid_primary, child_fd): (RawFd, RawFd) = self
+                let (reader, child_pid): (Box<dyn Read + Send>, Option<u32>) = self
                     .bus
                     .os_input
                     .as_mut()
@@ -1830,16 +1818,9 @@ impl Pty {
                     let err_context =
                         |pane_id| format!("failed to run async task for pane {pane_id:?}");
                     let senders = self.bus.senders.clone();
-                    let os_input = self
-                        .bus
-                        .os_input
-                        .as_ref()
-                        .with_context(|| err_context(pane_id))
-                        .fatal()
-                        .clone();
                     let debug_to_file = self.debug_to_file;
                     async move {
-                        TerminalBytes::new(pid_primary, senders, os_input, debug_to_file, id)
+                        TerminalBytes::new(id, reader, senders, debug_to_file)
                             .listen()
                             .await
                             .with_context(|| err_context(pane_id))
@@ -1848,8 +1829,10 @@ impl Pty {
                 });
 
                 self.task_handles.insert(id, terminal_bytes);
-                self.id_to_child_pid.insert(id, child_fd);
-                self.capture_initial_cwd(id, child_fd);
+                if let Some(child_pid) = child_pid {
+                    self.id_to_child_pid.insert(id, child_pid);
+                    self.capture_initial_cwd(id, child_pid);
+                }
                 if let Some(originating_plugin) = self.originating_plugins.get(&id) {
                     self.bus
                         .senders
@@ -1876,7 +1859,7 @@ impl Pty {
         let pids: Vec<_> = terminal_ids
             .iter()
             .filter_map(|id| self.id_to_child_pid.get(&id))
-            .map(|pid| Pid::from_raw(*pid))
+            .copied()
             .collect();
         let (pids_to_cwds, pids_to_cmds) = self
             .bus
@@ -1894,13 +1877,10 @@ impl Pty {
         for terminal_id in terminal_ids {
             let process_id = self.id_to_child_pid.get(&terminal_id);
             let cwd = process_id
-                .as_ref()
-                .and_then(|pid| pids_to_cwds.get(&Pid::from_raw(**pid)));
+                .and_then(|pid| pids_to_cwds.get(pid));
             let cmd_sysinfo = process_id
-                .as_ref()
-                .and_then(|pid| pids_to_cmds.get(&Pid::from_raw(**pid)));
+                .and_then(|pid| pids_to_cmds.get(pid));
             let cmd_ps = process_id
-                .as_ref()
                 .and_then(|pid| ppids_to_cmds.get(&format!("{}", pid)));
             if let Some(cmd) = cmd_ps {
                 terminal_ids_to_commands.insert(terminal_id, cmd.clone());
@@ -1945,7 +1925,7 @@ impl Pty {
                                 self.bus
                                     .os_input
                                     .as_ref()
-                                    .and_then(|input| input.get_cwd(Pid::from_raw(pid)))
+                                    .and_then(|input| input.get_cwd(pid))
                             })
                             .or_else(|| self.terminal_cwds.get(id).cloned())
                     },
@@ -1983,9 +1963,9 @@ impl Pty {
         ))?;
         Ok(())
     }
-    fn capture_initial_cwd(&mut self, terminal_id: u32, child_fd: RawFd) {
+    fn capture_initial_cwd(&mut self, terminal_id: u32, child_pid: u32) {
         if let Some(os_input) = self.bus.os_input.as_ref() {
-            if let Some(cwd) = os_input.get_cwd(Pid::from_raw(child_fd)) {
+            if let Some(cwd) = os_input.get_cwd(child_pid) {
                 self.terminal_cwds.insert(terminal_id, cwd);
             }
         }
@@ -1997,7 +1977,7 @@ impl Pty {
         let pids: Vec<_> = terminal_ids
             .iter()
             .filter_map(|id| self.id_to_child_pid.get(&id))
-            .map(|pid| Pid::from_raw(*pid))
+            .copied()
             .collect();
 
         let (pids_to_cwds, _) = self
@@ -2010,8 +1990,7 @@ impl Pty {
         for terminal_id in terminal_ids {
             let process_id = self.id_to_child_pid.get(&terminal_id);
             let cwd = process_id
-                .as_ref()
-                .and_then(|pid| pids_to_cwds.get(&Pid::from_raw(**pid)));
+                .and_then(|pid| pids_to_cwds.get(pid));
 
             if let Some(cwd) = cwd {
                 if self.terminal_cwds.get(&terminal_id) != Some(cwd) {
@@ -2050,13 +2029,12 @@ impl Pty {
 
         match pane_id {
             PaneId::Terminal(terminal_id) => {
-                if let Some(&child_fd) = self.id_to_child_pid.get(&terminal_id) {
-                    let pid = Pid::from_raw(child_fd);
+                if let Some(&child_pid) = self.id_to_child_pid.get(&terminal_id) {
                     self.bus
                         .os_input
                         .as_ref()
                         .context("no OS I/O interface found")
-                        .and_then(|os_input| os_input.send_sigint(pid))
+                        .and_then(|os_input| os_input.send_sigint(child_pid))
                         .with_context(err_context)
                         .non_fatal();
                 } else {
@@ -2074,13 +2052,12 @@ impl Pty {
 
         match pane_id {
             PaneId::Terminal(terminal_id) => {
-                if let Some(&child_fd) = self.id_to_child_pid.get(&terminal_id) {
-                    let pid = Pid::from_raw(child_fd);
+                if let Some(&child_pid) = self.id_to_child_pid.get(&terminal_id) {
                     self.bus
                         .os_input
                         .as_ref()
                         .context("no OS I/O interface found")
-                        .and_then(|os_input| os_input.force_kill(pid))
+                        .and_then(|os_input| os_input.force_kill(child_pid))
                         .with_context(err_context)
                         .non_fatal();
                 } else {
@@ -2096,8 +2073,8 @@ impl Pty {
     pub fn get_pane_pid(&self, pane_id: PaneId) -> GetPanePidResponse {
         match pane_id {
             PaneId::Terminal(terminal_id) => {
-                if let Some(&child_fd) = self.id_to_child_pid.get(&terminal_id) {
-                    GetPanePidResponse::Ok(child_fd)
+                if let Some(&child_pid) = self.id_to_child_pid.get(&terminal_id) {
+                    GetPanePidResponse::Ok(child_pid as i32)
                 } else {
                     GetPanePidResponse::Err(format!(
                         "Terminal pane {} not found or not running",
