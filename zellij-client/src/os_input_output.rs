@@ -1,11 +1,12 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use interprocess;
-use signal_hook;
 use zellij_utils::pane_size::Size;
 
+use zellij_os::signals::BlockingSignalIterator;
+pub use zellij_os::signals::{AsyncSignalListener, AsyncSignals, SignalEvent};
+
 use interprocess::local_socket::LocalSocketStream;
-use signal_hook::{consts::signal::*, iterator::Signals};
 use std::io::prelude::*;
 use std::io::IsTerminal;
 use std::path::Path;
@@ -51,64 +52,6 @@ impl AsyncStdin for AsyncStdinReader {
         use tokio::io::AsyncReadExt;
         let n = self.stdin.read(&mut self.buffer).await?;
         Ok(self.buffer[..n].to_vec())
-    }
-}
-
-pub enum SignalEvent {
-    Resize,
-    Quit,
-}
-
-/// Trait for async signal listening, allowing for testable implementations
-#[async_trait]
-pub trait AsyncSignals: Send {
-    async fn recv(&mut self) -> Option<SignalEvent>;
-}
-
-pub struct AsyncSignalListener {
-    sigwinch: tokio::signal::unix::Signal,
-    sigterm: tokio::signal::unix::Signal,
-    sigint: tokio::signal::unix::Signal,
-    sigquit: tokio::signal::unix::Signal,
-    sighup: tokio::signal::unix::Signal,
-}
-
-impl AsyncSignalListener {
-    pub fn new() -> io::Result<Self> {
-        use tokio::signal::unix::{signal, SignalKind};
-        Ok(Self {
-            sigwinch: signal(SignalKind::window_change())?,
-            sigterm: signal(SignalKind::terminate())?,
-            sigint: signal(SignalKind::interrupt())?,
-            sigquit: signal(SignalKind::quit())?,
-            sighup: signal(SignalKind::hangup())?,
-        })
-    }
-
-    pub async fn recv_resize(&mut self) -> Option<()> {
-        self.sigwinch.recv().await
-    }
-
-    pub async fn recv_quit(&mut self) -> Option<()> {
-        tokio::select! {
-            result = self.sigterm.recv() => result,
-            result = self.sigint.recv() => result,
-            result = self.sigquit.recv() => result,
-            result = self.sighup.recv() => result,
-        }
-    }
-}
-
-#[async_trait]
-impl AsyncSignals for AsyncSignalListener {
-    async fn recv(&mut self) -> Option<SignalEvent> {
-        tokio::select! {
-            result = self.sigwinch.recv() => result.map(|_| SignalEvent::Resize),
-            result = self.sigterm.recv() => result.map(|_| SignalEvent::Quit),
-            result = self.sigint.recv() => result.map(|_| SignalEvent::Quit),
-            result = self.sigquit.recv() => result.map(|_| SignalEvent::Quit),
-            result = self.sighup.recv() => result.map(|_| SignalEvent::Quit),
-        }
     }
 }
 
@@ -282,10 +225,10 @@ impl ClientOsApi for ClientOsInputOutput {
     }
     fn handle_signals(&self, sigwinch_cb: Box<dyn Fn()>, quit_cb: Box<dyn Fn()>) {
         let mut sigwinch_cb_timestamp = time::Instant::now();
-        let mut signals = Signals::new(&[SIGWINCH, SIGTERM, SIGINT, SIGQUIT, SIGHUP]).unwrap();
-        for signal in signals.forever() {
-            match signal {
-                SIGWINCH => {
+        let signals = BlockingSignalIterator::new().unwrap();
+        for event in signals {
+            match event {
+                SignalEvent::Resize => {
                     // throttle sigwinch_cb calls, reduce excessive renders while resizing
                     if sigwinch_cb_timestamp.elapsed() < SIGWINCH_CB_THROTTLE_DURATION {
                         thread::sleep(SIGWINCH_CB_THROTTLE_DURATION);
@@ -293,11 +236,10 @@ impl ClientOsApi for ClientOsInputOutput {
                     sigwinch_cb_timestamp = time::Instant::now();
                     sigwinch_cb();
                 },
-                SIGTERM | SIGINT | SIGQUIT | SIGHUP => {
+                SignalEvent::Quit => {
                     quit_cb();
                     break;
                 },
-                _ => unreachable!(),
             }
         }
     }
