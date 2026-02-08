@@ -1,8 +1,4 @@
-use crate::{
-    os_input_output::AsyncReader,
-    screen::ScreenInstruction,
-    thread_bus::ThreadSenders,
-};
+use crate::{os_input_output::AsyncReader, screen::ScreenInstruction, thread_bus::ThreadSenders};
 use async_std::task;
 use std::{
     io::Read,

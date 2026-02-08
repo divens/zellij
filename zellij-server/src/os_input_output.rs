@@ -187,14 +187,16 @@ fn spawn_command_in_pty(
         pixel_height: 0,
     };
 
-    let env_vars = vec![
-        ("ZELLIJ_PANE_ID".to_string(), format!("{}", terminal_id)),
-    ];
+    let env_vars = vec![("ZELLIJ_PANE_ID".to_string(), format!("{}", terminal_id))];
 
     let cmd_for_cb = cmd.clone();
     let quit_cb_clone = quit_cb.clone();
     let quit_cb_wrapper = Box::new(move |exit_status: Option<i32>| {
-        quit_cb_clone(PaneId::Terminal(terminal_id), exit_status, cmd_for_cb.clone());
+        quit_cb_clone(
+            PaneId::Terminal(terminal_id),
+            exit_status,
+            cmd_for_cb.clone(),
+        );
     });
 
     match zellij_os::pty::spawn_in_pty(
@@ -214,10 +216,8 @@ fn spawn_command_in_pty(
             Ok((spawn_result.pty, reader, child_pid))
         },
         Err(e) => match failover_cmd {
-            Some(failover_cmd) => {
-                spawn_command_in_pty(failover_cmd, None, quit_cb, terminal_id)
-                    .with_context(err_context)
-            },
+            Some(failover_cmd) => spawn_command_in_pty(failover_cmd, None, quit_cb, terminal_id)
+                .with_context(err_context),
             None => Err(e).with_context(err_context),
         },
     }
@@ -452,20 +452,15 @@ impl ServerOsApi for ServerOsInputOutput {
                     .to_anyhow()
                     .with_context(err_context)?
                     .insert(terminal_id, None);
-                spawn_terminal(
-                    terminal_action,
-                    quit_cb,
-                    default_editor,
-                    terminal_id,
-                )
-                .and_then(|(pty_handle, reader, child_pid)| {
-                    self.terminal_id_to_pty
-                        .lock()
-                        .to_anyhow()?
-                        .insert(terminal_id, Some(pty_handle));
-                    Ok((terminal_id, reader, child_pid))
-                })
-                .with_context(err_context)
+                spawn_terminal(terminal_action, quit_cb, default_editor, terminal_id)
+                    .and_then(|(pty_handle, reader, child_pid)| {
+                        self.terminal_id_to_pty
+                            .lock()
+                            .to_anyhow()?
+                            .insert(terminal_id, Some(pty_handle));
+                        Ok((terminal_id, reader, child_pid))
+                    })
+                    .with_context(err_context)
             },
             None => Err(anyhow!("no more terminal IDs left to allocate")),
         }
