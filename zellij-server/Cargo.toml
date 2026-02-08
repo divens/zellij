@@ -22,15 +22,12 @@ cassowary = { version = "0.3.0", default-features = false }
 chrono = { version = "0.4.19", default-features = false, features = ["std", "clock"] }
 zellij-os = { workspace = true }
 crossbeam = { version = "0.8", default-features = false, features = ["crossbeam-channel", "std"] }
-daemonize = { workspace = true }
 highway = { version = "0.6.4", default-features = false, features = ["std"] }
 interprocess = { workspace = true }
 isahc = { workspace = true }
 kdl = { workspace = true }
 lazy_static = { workspace = true }
-libc = { workspace = true }
 log = { workspace = true }
-nix = { workspace = true }
 notify-debouncer-full = { workspace = true }
 prost = { workspace = true }
 regex = { workspace = true }
@@ -56,6 +53,10 @@ num_cpus = "1.16"
 version = "0.51.3"
 default-features = false
 features = ["std"]
+
+[target.'cfg(unix)'.dependencies]
+daemonize = { workspace = true }
+nix = { workspace = true }
 
 [dev-dependencies]
 insta = "1.6.0"
