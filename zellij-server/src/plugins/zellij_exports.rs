@@ -2128,13 +2128,13 @@ fn delete_dead_session(session_name: String) -> Result<()> {
 }
 
 fn delete_all_dead_sessions() -> Result<()> {
-    use std::os::unix::fs::FileTypeExt;
+    use zellij_utils::consts::is_ipc_socket;
     let mut live_sessions = vec![];
     if let Ok(files) = std::fs::read_dir(&*ZELLIJ_SOCK_DIR) {
         files.for_each(|file| {
             if let Ok(file) = file {
                 if let Ok(file_name) = file.file_name().into_string() {
-                    if file.file_type().unwrap().is_socket() {
+                    if is_ipc_socket(&file.file_type().unwrap()) {
                         live_sessions.push(file_name);
                     }
                 }
