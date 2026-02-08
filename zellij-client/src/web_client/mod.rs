@@ -27,11 +27,7 @@ use axum::{
 use axum_server::tls_rustls::RustlsConfig;
 use axum_server::Handle;
 
-use daemonize::{self, Outcome};
-use nix::sys::stat::{umask, Mode};
-
-use interprocess::unnamed_pipe::pipe;
-use std::io::{prelude::*, BufRead, BufReader};
+use std::io::prelude::*;
 use tokio::runtime::Runtime;
 use zellij_utils::input::{config::Config, options::Options};
 
@@ -247,12 +243,18 @@ pub async fn serve_web_client(
     }
 }
 
+#[cfg(unix)]
 fn daemonize_web_server(
     web_server_ip: IpAddr,
     web_server_port: u16,
     web_server_cert: Option<PathBuf>,
     web_server_key: Option<PathBuf>,
 ) -> (Runtime, std::net::TcpListener, Option<RustlsConfig>) {
+    use daemonize::{self, Outcome};
+    use interprocess::unnamed_pipe::pipe;
+    use nix::sys::stat::{umask, Mode};
+    use std::io::{BufRead, BufReader};
+
     let (mut exit_message_tx, exit_message_rx) = pipe().unwrap();
     let (mut exit_status_tx, mut exit_status_rx) = pipe().unwrap();
     let current_umask = umask(Mode::all());
@@ -343,6 +345,52 @@ fn daemonize_web_server(
         },
         _ => {
             eprintln!("Failed to start server");
+            std::process::exit(2);
+        },
+    }
+}
+
+#[cfg(not(unix))]
+fn daemonize_web_server(
+    web_server_ip: IpAddr,
+    web_server_port: u16,
+    web_server_cert: Option<PathBuf>,
+    web_server_key: Option<PathBuf>,
+) -> (Runtime, std::net::TcpListener, Option<RustlsConfig>) {
+    log::warn!("Daemonization is not supported on this platform, running in foreground");
+    let runtime = Runtime::new().unwrap();
+    let listener = runtime.block_on(async move {
+        std::net::TcpListener::bind(format!("{}:{}", web_server_ip, web_server_port))
+    });
+    let tls_config = match (web_server_cert, web_server_key) {
+        (Some(cert), Some(key)) => {
+            let tls_config = runtime.block_on(async move {
+                RustlsConfig::from_pem_file(PathBuf::from(cert), PathBuf::from(key)).await
+            });
+            match tls_config {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(2);
+                },
+            }
+        },
+        (None, None) => None,
+        _ => {
+            eprintln!("Must specify both web_server_cert and web_server_key");
+            std::process::exit(2);
+        },
+    };
+    match listener {
+        Ok(listener) => {
+            println!(
+                "Web Server started on {} port {}",
+                web_server_ip, web_server_port
+            );
+            (runtime, listener, tls_config)
+        },
+        Err(e) => {
+            eprintln!("{}", e);
             std::process::exit(2);
         },
     }
