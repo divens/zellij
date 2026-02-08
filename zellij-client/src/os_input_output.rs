@@ -6,7 +6,7 @@ use zellij_utils::pane_size::Size;
 use zellij_os::signals::BlockingSignalIterator;
 pub use zellij_os::signals::{AsyncSignalListener, AsyncSignals, SignalEvent};
 
-use interprocess::local_socket::LocalSocketStream;
+use interprocess::local_socket::{prelude::*, GenericFilePath, Stream as LocalSocketStream};
 use std::io::prelude::*;
 use std::io::IsTerminal;
 use std::path::Path;
@@ -244,9 +244,10 @@ impl ClientOsApi for ClientOsInputOutput {
         }
     }
     fn connect_to_server(&self, path: &Path) {
+        let fs_name = path.to_fs_name::<GenericFilePath>().expect("failed to convert path to socket name");
         let socket;
         loop {
-            match LocalSocketStream::connect(path) {
+            match LocalSocketStream::connect(fs_name.clone()) {
                 Ok(sock) => {
                     socket = sock;
                     break;

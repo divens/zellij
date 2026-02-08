@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::rc::Rc;
 
-use interprocess::local_socket::LocalSocketStream;
+use interprocess::local_socket::Stream as LocalSocketStream;
 use zellij_utils::{
     data::{ModeInfo, Palette, Style},
     input::command::{RunCommand, TerminalAction},
