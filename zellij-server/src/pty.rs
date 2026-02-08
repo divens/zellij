@@ -2192,8 +2192,5 @@ fn send_command_not_found_to_screen(
 }
 
 pub fn get_default_shell() -> PathBuf {
-    PathBuf::from(std::env::var("SHELL").unwrap_or_else(|_| {
-        log::warn!("Cannot read SHELL env, falling back to use /bin/sh");
-        "/bin/sh".to_string()
-    }))
+    zellij_os::shell::get_default_shell()
 }
