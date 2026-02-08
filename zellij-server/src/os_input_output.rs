@@ -3,7 +3,6 @@ use crate::{panes::PaneId, ClientId};
 use async_std;
 use interprocess;
 use interprocess::local_socket::LocalSocketStream;
-use signal_hook;
 use sysinfo::{ProcessExt, ProcessRefreshKind, System, SystemExt};
 use tempfile::tempfile;
 use zellij_os::pty::{PtyHandle, PtySize};
