@@ -1,6 +1,26 @@
 use super::*;
 
+#[cfg(unix)]
 use zellij_os::pty::{spawn_in_pty, PtySize};
+
+// --- Cross-platform command helpers ---
+
+/// Long-running command (for signal tests).
+#[cfg(unix)]
+fn long_running_cmd() -> (PathBuf, Vec<String>) {
+    (PathBuf::from("/bin/sleep"), vec!["60".to_string()])
+}
+#[cfg(windows)]
+fn long_running_cmd() -> (PathBuf, Vec<String>) {
+    (
+        PathBuf::from("ping"),
+        vec![
+            "-n".to_string(),
+            "999".to_string(),
+            "127.0.0.1".to_string(),
+        ],
+    )
+}
 
 fn make_server() -> ServerOsInputOutput {
     ServerOsInputOutput {
@@ -23,7 +43,10 @@ fn get_cwd() {
 }
 
 // --- PTY integration tests via portable-pty ---
+// Gated to Unix: portable-pty's ConPTY backend on Windows has process
+// initialization issues (0xc0000142 STATUS_DLL_INIT_FAILED).
 
+#[cfg(unix)]
 #[test]
 fn pty_roundtrip_write_read() {
     // Spawn a simple command via portable-pty and verify we can read its output
@@ -78,6 +101,7 @@ fn pty_roundtrip_write_read() {
 
 // --- Terminal resize tests ---
 
+#[cfg(unix)]
 #[test]
 fn pty_resize() {
     let (done_tx, done_rx) = std::sync::mpsc::channel();
@@ -125,6 +149,7 @@ fn pty_resize() {
     let _ = done_rx.recv_timeout(std::time::Duration::from_secs(5));
 }
 
+#[cfg(unix)]
 #[test]
 fn resize_through_server_api() {
     let (done_tx, done_rx) = std::sync::mpsc::channel();
@@ -178,10 +203,11 @@ fn resize_through_server_api() {
 
 #[test]
 fn kill_sends_sighup_to_process() {
-    let child = Command::new("sleep")
-        .arg("60")
+    let (cmd, args) = long_running_cmd();
+    let child = Command::new(&cmd)
+        .args(&args)
         .spawn()
-        .expect("failed to spawn sleep");
+        .expect("failed to spawn long-running process");
     let pid = child.id();
 
     let server = make_server();
@@ -200,10 +226,11 @@ fn kill_sends_sighup_to_process() {
 
 #[test]
 fn force_kill_sends_sigkill_to_process() {
-    let child = Command::new("sleep")
-        .arg("60")
+    let (cmd, args) = long_running_cmd();
+    let child = Command::new(&cmd)
+        .args(&args)
         .spawn()
-        .expect("failed to spawn sleep");
+        .expect("failed to spawn long-running process");
     let pid = child.id();
 
     let server = make_server();
@@ -215,10 +242,11 @@ fn force_kill_sends_sigkill_to_process() {
 
 #[test]
 fn send_sigint_to_process() {
-    let child = Command::new("cat")
-        .stdin(std::process::Stdio::piped())
+    let (cmd, args) = long_running_cmd();
+    let child = Command::new(&cmd)
+        .args(&args)
         .spawn()
-        .expect("failed to spawn cat");
+        .expect("failed to spawn long-running process");
     let pid = child.id();
 
     let server = make_server();
@@ -230,6 +258,7 @@ fn send_sigint_to_process() {
 
 // --- PTY read/write through ServerOsApi ---
 
+#[cfg(unix)]
 #[test]
 fn write_through_server_os_api() {
     let (done_tx, done_rx) = std::sync::mpsc::channel();
@@ -276,6 +305,7 @@ fn write_through_server_os_api() {
 
 // --- Cached resize tests ---
 
+#[cfg(unix)]
 #[test]
 fn cached_resizes_are_applied() {
     let (done_tx, done_rx) = std::sync::mpsc::channel();
