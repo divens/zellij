@@ -880,6 +880,9 @@ mod setup_test {
         let Some(LayoutInfo::File(layout_path, _)) = layout_info else {
             panic!("layout info has unexpected format");
         };
+        // Canonicalize to match production code (setup.rs:679), which canonicalizes
+        // the layout dir. On Windows, canonicalize() adds \\?\ prefix.
+        let config_dir = std::fs::canonicalize(&config_dir).unwrap_or(config_dir);
         let expected = config_dir.join("layouts").join("upside-down.kdl");
         assert_eq!(layout_path, expected.display().to_string());
     }
@@ -898,6 +901,9 @@ mod setup_test {
         let Some(LayoutInfo::File(layout_path, _)) = layout_info else {
             panic!("layout info has unexpected format");
         };
+        // Canonicalize to match production code (setup.rs:679), which canonicalizes
+        // the layout dir. On Windows, canonicalize() adds \\?\ prefix.
+        let config_dir = std::fs::canonicalize(&config_dir).unwrap_or(config_dir);
         let expected = config_dir.join("layouts").join("default.kdl");
         assert_eq!(layout_path, expected.display().to_string());
     }

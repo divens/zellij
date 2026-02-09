@@ -2198,6 +2198,10 @@ fn run_plugin_location_parsing() {
     assert_eq!(layout, expected_layout);
 }
 
+// Gated to Unix: shellexpand uses dirs::home_dir() for ~ expansion, which calls
+// SHGetKnownFolderPath on Windows (a system API, not $HOME env var). The test
+// sets HOME=/home/aram but Windows ignores it, making snapshots platform-dependent.
+#[cfg(unix)]
 #[test]
 fn env_var_expansion() {
     let raw_layout = r#"
