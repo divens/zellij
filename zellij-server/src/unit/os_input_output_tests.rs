@@ -1,11 +1,10 @@
 use super::*;
 
-#[cfg(unix)]
 use zellij_os::pty::{spawn_in_pty, PtySize};
 
 // --- Cross-platform command helpers ---
 
-/// Long-running command (for signal tests).
+/// Long-running command (for signal and PTY tests).
 #[cfg(unix)]
 fn long_running_cmd() -> (PathBuf, Vec<String>) {
     (PathBuf::from("/bin/sleep"), vec!["60".to_string()])
@@ -20,6 +19,30 @@ fn long_running_cmd() -> (PathBuf, Vec<String>) {
             "127.0.0.1".to_string(),
         ],
     )
+}
+
+/// Echo command (for PTY read tests).
+#[cfg(unix)]
+fn echo_cmd() -> (PathBuf, Vec<String>) {
+    (PathBuf::from("/bin/echo"), vec!["hello from pty".to_string()])
+}
+#[cfg(windows)]
+fn echo_cmd() -> (PathBuf, Vec<String>) {
+    (
+        PathBuf::from("cmd.exe"),
+        vec!["/c".to_string(), "echo".to_string(), "hello from pty".to_string()],
+    )
+}
+
+/// Stdin-reading command (for PTY write tests).
+#[cfg(unix)]
+fn stdin_reader_cmd() -> (PathBuf, Vec<String>) {
+    (PathBuf::from("/bin/cat"), vec![])
+}
+#[cfg(windows)]
+fn stdin_reader_cmd() -> (PathBuf, Vec<String>) {
+    // `more` reads stdin and echoes to stdout; works under ConPTY
+    (PathBuf::from("more"), vec![])
 }
 
 fn make_server() -> ServerOsInputOutput {
@@ -43,17 +66,15 @@ fn get_cwd() {
 }
 
 // --- PTY integration tests via portable-pty ---
-// Gated to Unix: portable-pty's ConPTY backend on Windows has process
-// initialization issues (0xc0000142 STATUS_DLL_INIT_FAILED).
 
-#[cfg(unix)]
 #[test]
 fn pty_roundtrip_write_read() {
     // Spawn a simple command via portable-pty and verify we can read its output
+    let (cmd, args) = echo_cmd();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let result = spawn_in_pty(
-        PathBuf::from("/bin/echo"),
-        vec!["hello from pty".to_string()],
+        cmd,
+        args,
         None,
         vec![],
         PtySize {
@@ -101,13 +122,13 @@ fn pty_roundtrip_write_read() {
 
 // --- Terminal resize tests ---
 
-#[cfg(unix)]
 #[test]
 fn pty_resize() {
+    let (cmd, args) = long_running_cmd();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let result = spawn_in_pty(
-        PathBuf::from("/bin/sleep"),
-        vec!["60".to_string()],
+        cmd,
+        args,
         None,
         vec![],
         PtySize {
@@ -149,13 +170,13 @@ fn pty_resize() {
     let _ = done_rx.recv_timeout(std::time::Duration::from_secs(5));
 }
 
-#[cfg(unix)]
 #[test]
 fn resize_through_server_api() {
+    let (cmd, args) = long_running_cmd();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let result = spawn_in_pty(
-        PathBuf::from("/bin/sleep"),
-        vec!["60".to_string()],
+        cmd,
+        args,
         None,
         vec![],
         PtySize {
@@ -264,13 +285,13 @@ fn send_sigint_to_process() {
 
 // --- PTY read/write through ServerOsApi ---
 
-#[cfg(unix)]
 #[test]
 fn write_through_server_os_api() {
+    let (cmd, args) = stdin_reader_cmd();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let result = spawn_in_pty(
-        PathBuf::from("/bin/cat"),
-        vec![],
+        cmd,
+        args,
         None,
         vec![],
         PtySize {
@@ -311,13 +332,13 @@ fn write_through_server_os_api() {
 
 // --- Cached resize tests ---
 
-#[cfg(unix)]
 #[test]
 fn cached_resizes_are_applied() {
+    let (cmd, args) = long_running_cmd();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let result = spawn_in_pty(
-        PathBuf::from("/bin/sleep"),
-        vec!["60".to_string()],
+        cmd,
+        args,
         None,
         vec![],
         PtySize {

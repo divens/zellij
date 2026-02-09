@@ -200,9 +200,6 @@ mod tests {
         )
     }
 
-    /// Test that ConPTY (Windows) / Unix PTY can spawn a process and read output.
-    /// On Windows under `cargo test`, this exercises the ConPTY backend in a
-    /// captured-stdout environment — the scenario that triggers 0xc0000142.
     #[test]
     fn spawn_and_read_output() {
         let (cmd, args) = echo_cmd();
@@ -222,51 +219,34 @@ mod tests {
             Box::new(move |_exit_status| {
                 let _ = done_tx.send(());
             }),
-        );
+        )
+        .expect("spawn_in_pty should succeed");
 
-        match result {
-            Ok(result) => {
-                let mut reader = result.pty.try_clone_reader().expect("clone reader");
-                let mut output = String::new();
-                let mut buf = [0u8; 1024];
-                let start = std::time::Instant::now();
-                while start.elapsed() < std::time::Duration::from_secs(5) {
-                    match reader.read(&mut buf) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            output.push_str(&String::from_utf8_lossy(&buf[..n]));
-                            if output.contains("hello from pty") {
-                                break;
-                            }
-                        },
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            std::thread::sleep(std::time::Duration::from_millis(10));
-                        },
-                        Err(_) => break,
+        let mut reader = result.pty.try_clone_reader().expect("clone reader");
+        let mut output = String::new();
+        let mut buf = [0u8; 1024];
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_secs(5) {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    output.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if output.contains("hello from pty") {
+                        break;
                     }
-                }
-                assert!(
-                    output.contains("hello from pty"),
-                    "should read output from spawned command, got: {:?}",
-                    output
-                );
-                let _ = done_rx.recv_timeout(std::time::Duration::from_secs(5));
-            },
-            Err(e) => {
-                let err_str = format!("{:#}", e);
-                if err_str.contains("c0000142") || err_str.contains("3221225794") {
-                    eprintln!("ConPTY 0xc0000142 confirmed in cargo test environment");
-                    eprintln!("Error: {}", err_str);
-                    // Don't panic — this is the known issue we're diagnosing.
-                    // Mark as expected failure on Windows.
-                    #[cfg(windows)]
-                    {
-                        eprintln!("EXPECTED: ConPTY fails under cargo test on Windows");
-                        return;
-                    }
-                }
-                panic!("spawn_in_pty failed: {:#}", e);
-            },
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                },
+                Err(_) => break,
+            }
         }
+
+        assert!(
+            output.contains("hello from pty"),
+            "should read output from spawned command, got: {:?}",
+            output
+        );
+        let _ = done_rx.recv_timeout(std::time::Duration::from_secs(5));
     }
 }
