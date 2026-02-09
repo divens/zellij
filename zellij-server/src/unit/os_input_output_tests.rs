@@ -201,13 +201,27 @@ fn resize_through_server_api() {
 
 // --- Signal delivery tests ---
 
+/// Spawn a long-running process for signal tests.
+/// On Windows, console applications need their own console to initialize.
+/// `cargo test` redirects stdout/stderr to pipes, so child processes can't
+/// attach to the parent's console — causing 0xc0000142 (STATUS_DLL_INIT_FAILED).
+/// CREATE_NO_WINDOW gives each child a hidden console so DLL init succeeds.
+fn spawn_long_running() -> std::process::Child {
+    let (cmd, args) = long_running_cmd();
+    let mut command = Command::new(&cmd);
+    command.args(&args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command.spawn().expect("failed to spawn long-running process")
+}
+
 #[test]
 fn kill_sends_sighup_to_process() {
-    let (cmd, args) = long_running_cmd();
-    let child = Command::new(&cmd)
-        .args(&args)
-        .spawn()
-        .expect("failed to spawn long-running process");
+    let child = spawn_long_running();
     let pid = child.id();
 
     let server = make_server();
@@ -226,11 +240,7 @@ fn kill_sends_sighup_to_process() {
 
 #[test]
 fn force_kill_sends_sigkill_to_process() {
-    let (cmd, args) = long_running_cmd();
-    let child = Command::new(&cmd)
-        .args(&args)
-        .spawn()
-        .expect("failed to spawn long-running process");
+    let child = spawn_long_running();
     let pid = child.id();
 
     let server = make_server();
@@ -242,11 +252,7 @@ fn force_kill_sends_sigkill_to_process() {
 
 #[test]
 fn send_sigint_to_process() {
-    let (cmd, args) = long_running_cmd();
-    let child = Command::new(&cmd)
-        .args(&args)
-        .spawn()
-        .expect("failed to spawn long-running process");
+    let child = spawn_long_running();
     let pid = child.id();
 
     let server = make_server();
