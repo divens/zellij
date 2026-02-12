@@ -41,20 +41,34 @@ pub(crate) fn stdin_loop(
                     .unwrap();
             },
             None => {
-                send_input_instructions
-                    .send(InputInstruction::StartedParsing)
-                    .unwrap();
-                let terminal_emulator_query_string =
-                    stdin_ansi_parser.terminal_emulator_query_string();
-                let _ = os_input
-                    .get_stdout_writer()
-                    .write(terminal_emulator_query_string.as_bytes())
-                    .unwrap();
-                let query_duration = stdin_ansi_parser.startup_query_duration();
-                send_done_parsing_after_query_timeout(
-                    send_input_instructions.clone(),
-                    query_duration,
-                );
+                // On Windows, the ANSI terminal query mechanism (writing escape
+                // sequences to stdout and reading responses from stdin) does not
+                // work reliably — Windows Terminal may not deliver responses
+                // through the console input buffer in a way that fill_buf() can
+                // read, causing the startup to hang.  Skip it for now; pixel
+                // dimensions and color registers are nice-to-have, not critical.
+                #[cfg(not(windows))]
+                {
+                    send_input_instructions
+                        .send(InputInstruction::StartedParsing)
+                        .unwrap();
+                    let terminal_emulator_query_string =
+                        stdin_ansi_parser.terminal_emulator_query_string();
+                    let _ = os_input
+                        .get_stdout_writer()
+                        .write(terminal_emulator_query_string.as_bytes())
+                        .unwrap();
+                    let query_duration = stdin_ansi_parser.startup_query_duration();
+                    send_done_parsing_after_query_timeout(
+                        send_input_instructions.clone(),
+                        query_duration,
+                    );
+                }
+                #[cfg(windows)]
+                {
+                    let _ = send_input_instructions
+                        .send(InputInstruction::DoneParsing);
+                }
             },
         }
     }
