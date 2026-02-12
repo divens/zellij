@@ -102,6 +102,7 @@ pub fn spawn_in_pty(
     size: PtySize,
     quit_cb: Box<dyn FnOnce(Option<i32>) + Send>,
 ) -> Result<SpawnResult> {
+    log::info!("spawn_in_pty: opening PTY for {:?}", cmd);
     let pty_system = native_pty_system();
 
     let pty_size = PortablePtySize {
