@@ -91,17 +91,23 @@ pub(crate) fn stdin_loop(
                         continue;
                     }
                     if let Some((key, bytes)) = cast_crossterm_key(key_event) {
-                        send_input_instructions
+                        if send_input_instructions
                             .send(InputInstruction::KeyWithModifierEvent(key, bytes, false))
-                            .unwrap();
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
                 },
                 Ok(Event::Paste(text)) => {
                     let raw_bytes = text.as_bytes().to_vec();
                     let paste_event = termwiz::input::InputEvent::Paste(text);
-                    send_input_instructions
+                    if send_input_instructions
                         .send(InputInstruction::KeyEvent(paste_event, raw_bytes))
-                        .unwrap();
+                        .is_err()
+                    {
+                        break;
+                    }
                 },
                 Ok(Event::Resize(..)) => {
                     // Handled by the signal handler thread
