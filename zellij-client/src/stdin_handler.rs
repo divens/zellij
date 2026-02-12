@@ -1,11 +1,15 @@
-use crate::keyboard_parser::KittyKeyboardParser;
 use crate::os_input_output::ClientOsApi;
 use crate::stdin_ansi_parser::StdinAnsiParser;
 use crate::InputInstruction;
 use std::sync::{Arc, Mutex};
-use termwiz::input::{InputEvent, InputParser};
 use zellij_utils::channels::SenderWithContext;
 
+#[cfg(not(windows))]
+use crate::keyboard_parser::KittyKeyboardParser;
+#[cfg(not(windows))]
+use termwiz::input::{InputEvent, InputParser};
+
+#[cfg(not(windows))]
 fn send_done_parsing_after_query_timeout(
     send_input_instructions: SenderWithContext<InputInstruction>,
     query_duration: u64,
@@ -70,23 +74,26 @@ pub(crate) fn stdin_loop(
             },
         }
     }
-    // On Windows with the native console (cmd.exe, PowerShell, Windows Terminal),
-    // use crossterm's event::read() which reads native INPUT_RECORDs and properly
-    // extracts ALT as a modifier flag from dwControlKeyState.
-    //
-    // Inside a terminal emulator like Alacritty (detected via TERM env var), input
-    // arrives as VT escape sequences through a conpty PTY — use the standard byte
-    // reader + termwiz parser instead, same as Unix.
+    // On Windows, always use crossterm's event::read() which reads native
+    // INPUT_RECORDs via ReadConsoleInput. This works both on the native console
+    // (cmd.exe, PowerShell, Windows Terminal) and inside terminal emulators like
+    // Alacritty, because conpty translates VT sequences into INPUT_RECORDs before
+    // the child process sees them. Crossterm properly extracts ALT from the
+    // dwControlKeyState modifier flags.
     #[cfg(windows)]
-    let use_crossterm_reader = std::env::var("TERM").is_err();
-
-    #[cfg(windows)]
-    if use_crossterm_reader {
+    {
         use crossterm::event::{self, Event, KeyEventKind};
         use zellij_utils::input::cast_crossterm_key;
 
+        let _ = (stdin_ansi_parser, explicitly_disable_kitty_keyboard_protocol);
+
         loop {
-            match event::read() {
+            let evt = event::read();
+            match &evt {
+                Ok(e) => log::info!("crossterm event: {:?}", e),
+                Err(e) => log::error!("crossterm error: {:?}", e),
+            }
+            match evt {
                 Ok(Event::Key(key_event)) => {
                     if key_event.kind != KeyEventKind::Press {
                         continue;
@@ -121,89 +128,88 @@ pub(crate) fn stdin_loop(
                 },
             }
         }
-        return;
     }
 
-    // Byte reader + termwiz/kitty parser path.
-    // Used on Unix always, and on Windows when inside a terminal emulator
-    // (Alacritty, etc.) that sends VT escape sequences via conpty.
-    let mut input_parser = InputParser::new();
-    let mut current_buffer = vec![];
-    let mut ansi_stdin_events = vec![];
-    loop {
-        match os_input.read_from_stdin() {
-            Ok(buf) => {
-                {
-                    // here we check if we need to parse specialized ANSI instructions sent over STDIN
-                    // this happens either on startup (see above) or on SIGWINCH
-                    //
-                    // if we need to parse them, we do so with an internal timeout - anything else we
-                    // receive on STDIN during that timeout is unceremoniously dropped
-                    let mut stdin_ansi_parser = stdin_ansi_parser.lock().unwrap();
-                    if stdin_ansi_parser.should_parse() {
-                        let events = stdin_ansi_parser.parse(buf);
-                        if !events.is_empty() {
-                            ansi_stdin_events.append(&mut events.clone());
-                            let _ = send_input_instructions
-                                .send(InputInstruction::AnsiStdinInstructions(events));
-                        }
-                        continue;
-                    }
-                }
-                if !ansi_stdin_events.is_empty() {
-                    stdin_ansi_parser
-                        .lock()
-                        .unwrap()
-                        .write_cache(ansi_stdin_events.drain(..).collect());
-                }
-                current_buffer.append(&mut buf.to_vec());
-
-                if !explicitly_disable_kitty_keyboard_protocol {
-                    // first we try to parse with the KittyKeyboardParser
-                    // if we fail, we try to parse normally
-                    match KittyKeyboardParser::new().parse(&buf) {
-                        Some(key_with_modifier) => {
-                            send_input_instructions
-                                .send(InputInstruction::KeyWithModifierEvent(
-                                    key_with_modifier,
-                                    current_buffer.drain(..).collect(),
-                                    true,
-                                ))
-                                .unwrap();
+    #[cfg(not(windows))]
+    {
+        let mut input_parser = InputParser::new();
+        let mut current_buffer = vec![];
+        let mut ansi_stdin_events = vec![];
+        loop {
+            match os_input.read_from_stdin() {
+                Ok(buf) => {
+                    {
+                        // here we check if we need to parse specialized ANSI instructions sent over STDIN
+                        // this happens either on startup (see above) or on SIGWINCH
+                        //
+                        // if we need to parse them, we do so with an internal timeout - anything else we
+                        // receive on STDIN during that timeout is unceremoniously dropped
+                        let mut stdin_ansi_parser = stdin_ansi_parser.lock().unwrap();
+                        if stdin_ansi_parser.should_parse() {
+                            let events = stdin_ansi_parser.parse(buf);
+                            if !events.is_empty() {
+                                ansi_stdin_events.append(&mut events.clone());
+                                let _ = send_input_instructions
+                                    .send(InputInstruction::AnsiStdinInstructions(events));
+                            }
                             continue;
-                        },
-                        None => {},
+                        }
                     }
-                }
+                    if !ansi_stdin_events.is_empty() {
+                        stdin_ansi_parser
+                            .lock()
+                            .unwrap()
+                            .write_cache(ansi_stdin_events.drain(..).collect());
+                    }
+                    current_buffer.append(&mut buf.to_vec());
 
-                let maybe_more = false; // read_from_stdin should (hopefully) always empty the STDIN buffer completely
-                let mut events = vec![];
-                input_parser.parse(
-                    &buf,
-                    |input_event: InputEvent| {
-                        events.push(input_event);
-                    },
-                    maybe_more,
-                );
+                    if !explicitly_disable_kitty_keyboard_protocol {
+                        // first we try to parse with the KittyKeyboardParser
+                        // if we fail, we try to parse normally
+                        match KittyKeyboardParser::new().parse(&buf) {
+                            Some(key_with_modifier) => {
+                                send_input_instructions
+                                    .send(InputInstruction::KeyWithModifierEvent(
+                                        key_with_modifier,
+                                        current_buffer.drain(..).collect(),
+                                        true,
+                                    ))
+                                    .unwrap();
+                                continue;
+                            },
+                            None => {},
+                        }
+                    }
 
-                for input_event in events.into_iter() {
-                    send_input_instructions
-                        .send(InputInstruction::KeyEvent(
-                            input_event,
-                            current_buffer.drain(..).collect(),
-                        ))
-                        .unwrap();
-                }
-            },
-            Err(e) => {
-                if e == "Session ended" {
-                    log::debug!("Switched sessions, signing this thread off...");
-                } else {
-                    log::error!("Failed to read from STDIN: {}", e);
-                }
-                let _ = send_input_instructions.send(InputInstruction::Exit);
-                break;
-            },
+                    let maybe_more = false; // read_from_stdin should (hopefully) always empty the STDIN buffer completely
+                    let mut events = vec![];
+                    input_parser.parse(
+                        &buf,
+                        |input_event: InputEvent| {
+                            events.push(input_event);
+                        },
+                        maybe_more,
+                    );
+
+                    for input_event in events.into_iter() {
+                        send_input_instructions
+                            .send(InputInstruction::KeyEvent(
+                                input_event,
+                                current_buffer.drain(..).collect(),
+                            ))
+                            .unwrap();
+                    }
+                },
+                Err(e) => {
+                    if e == "Session ended" {
+                        log::debug!("Switched sessions, signing this thread off...");
+                    } else {
+                        log::error!("Failed to read from STDIN: {}", e);
+                    }
+                    let _ = send_input_instructions.send(InputInstruction::Exit);
+                    break;
+                },
+            }
         }
     }
 }
