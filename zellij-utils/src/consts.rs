@@ -198,6 +198,32 @@ pub fn ipc_bind(path: &std::path::Path) -> std::io::Result<interprocess::local_s
     ListenerOptions::new().name(ns_name).create_sync()
 }
 
+/// Connect to the reply pipe for a given IPC path (Windows only).
+///
+/// Uses `path-reply` as the named pipe for the server→client direction.
+#[cfg(windows)]
+pub fn ipc_connect_reply(
+    path: &std::path::Path,
+) -> std::io::Result<interprocess::local_socket::Stream> {
+    use interprocess::local_socket::{prelude::*, GenericNamespaced, Stream as LocalSocketStream};
+    let name = format!("{}-reply", path.to_string_lossy());
+    let ns_name = name.to_ns_name::<GenericNamespaced>()?;
+    LocalSocketStream::connect(ns_name)
+}
+
+/// Create an IPC listener for the reply pipe (Windows only).
+///
+/// Binds to `path-reply` as the named pipe for the server→client direction.
+#[cfg(windows)]
+pub fn ipc_bind_reply(
+    path: &std::path::Path,
+) -> std::io::Result<interprocess::local_socket::Listener> {
+    use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
+    let name = format!("{}-reply", path.to_string_lossy());
+    let ns_name = name.to_ns_name::<GenericNamespaced>()?;
+    ListenerOptions::new().name(ns_name).create_sync()
+}
+
 #[cfg(unix)]
 pub use unix_only::*;
 

@@ -661,7 +661,7 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
     let _ = thread::Builder::new()
         .name("server_listener".to_string())
         .spawn({
-            use interprocess::local_socket::traits::ListenerExt;
+            use interprocess::local_socket::traits::{Listener, ListenerExt};
             use zellij_utils::consts::ipc_bind;
             use zellij_utils::shared::set_permissions;
 
@@ -678,12 +678,27 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                 // "To ensure that your files are not removed, they should have their access time timestamp modified at least once every 6 hours of monotonic time or the 'sticky' bit should be set on the file. "
                 // It is not guaranteed that all platforms allow setting the sticky bit on sockets!
                 drop(set_permissions(&socket_path, 0o1700));
+                #[cfg(windows)]
+                let reply_listener = {
+                    use zellij_utils::consts::ipc_bind_reply;
+                    ipc_bind_reply(socket_path.as_path()).unwrap()
+                };
                 for stream in listener.incoming() {
                     match stream {
                         Ok(stream) => {
                             let mut os_input = os_input.clone();
                             let client_id = session_state.write().unwrap().new_client();
-                            let receiver = os_input.new_client(client_id, stream).unwrap();
+                            #[cfg(windows)]
+                            let reply_stream = Some(
+                                reply_listener
+                                    .accept()
+                                    .expect("failed to accept reply stream"),
+                            );
+                            #[cfg(not(windows))]
+                            let reply_stream = None;
+                            let receiver = os_input
+                                .new_client(client_id, stream, reply_stream)
+                                .unwrap();
                             let session_data = session_data.clone();
                             let session_state = session_state.clone();
                             let to_server = to_server.clone();

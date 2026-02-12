@@ -256,10 +256,36 @@ impl ClientOsApi for ClientOsInputOutput {
                 },
             }
         }
-        let sender = IpcSenderWithContext::new(socket);
-        let receiver = sender.get_receiver();
-        *self.send_instructions_to_server.lock().unwrap() = Some(sender);
-        *self.receive_instructions_from_server.lock().unwrap() = Some(receiver);
+        // On Windows, use two separate named pipes to avoid DuplicateHandle deadlock:
+        // - command pipe (socket): client writes, server reads
+        // - reply pipe: server writes, client reads
+        // On Unix, a single socket with try_clone_stream() works fine.
+        #[cfg(windows)]
+        {
+            let reply_socket;
+            loop {
+                match zellij_utils::consts::ipc_connect_reply(path) {
+                    Ok(sock) => {
+                        reply_socket = sock;
+                        break;
+                    },
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    },
+                }
+            }
+            let sender = IpcSenderWithContext::new(socket);
+            let receiver = IpcReceiverWithContext::new(reply_socket);
+            *self.send_instructions_to_server.lock().unwrap() = Some(sender);
+            *self.receive_instructions_from_server.lock().unwrap() = Some(receiver);
+        }
+        #[cfg(not(windows))]
+        {
+            let sender = IpcSenderWithContext::new(socket);
+            let receiver = sender.get_receiver();
+            *self.send_instructions_to_server.lock().unwrap() = Some(sender);
+            *self.receive_instructions_from_server.lock().unwrap() = Some(receiver);
+        }
     }
     fn load_palette(&self) -> Palette {
         // this was removed because termbg doesn't release stdin in certain scenarios (we know of
