@@ -5549,6 +5549,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "windows-sys 0.52.0",
  "zellij-os",
  "zellij-utils",
 ]

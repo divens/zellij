@@ -48,6 +48,12 @@ urlencoding = "2.1"
 daemonize = { workspace = true }
 nix = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+] }
+
 [dev-dependencies]
 insta = "1.6.0"
 serde_json = "1.0"
