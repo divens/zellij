@@ -160,6 +160,44 @@ pub fn is_ipc_socket(_file_type: &std::fs::FileType) -> bool {
     false
 }
 
+/// Connect to an IPC socket at the given path.
+///
+/// On Unix, this uses Unix domain sockets via `GenericFilePath`.
+/// On Windows, this uses named pipes via `GenericNamespaced`.
+#[cfg(unix)]
+pub fn ipc_connect(path: &std::path::Path) -> std::io::Result<interprocess::local_socket::Stream> {
+    use interprocess::local_socket::{prelude::*, GenericFilePath, Stream as LocalSocketStream};
+    let fs_name = path.to_fs_name::<GenericFilePath>()?;
+    LocalSocketStream::connect(fs_name)
+}
+
+#[cfg(windows)]
+pub fn ipc_connect(path: &std::path::Path) -> std::io::Result<interprocess::local_socket::Stream> {
+    use interprocess::local_socket::{prelude::*, GenericNamespaced, Stream as LocalSocketStream};
+    let name = path.to_string_lossy().to_string();
+    let ns_name = name.to_ns_name::<GenericNamespaced>()?;
+    LocalSocketStream::connect(ns_name)
+}
+
+/// Create an IPC listener bound to the given path.
+///
+/// On Unix, this uses Unix domain sockets via `GenericFilePath`.
+/// On Windows, this uses named pipes via `GenericNamespaced`.
+#[cfg(unix)]
+pub fn ipc_bind(path: &std::path::Path) -> std::io::Result<interprocess::local_socket::Listener> {
+    use interprocess::local_socket::{prelude::*, GenericFilePath, ListenerOptions};
+    let fs_name = path.to_fs_name::<GenericFilePath>()?;
+    ListenerOptions::new().name(fs_name).create_sync()
+}
+
+#[cfg(windows)]
+pub fn ipc_bind(path: &std::path::Path) -> std::io::Result<interprocess::local_socket::Listener> {
+    use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
+    let name = path.to_string_lossy().to_string();
+    let ns_name = name.to_ns_name::<GenericNamespaced>()?;
+    ListenerOptions::new().name(ns_name).create_sync()
+}
+
 #[cfg(unix)]
 pub use unix_only::*;
 
