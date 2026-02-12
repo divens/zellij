@@ -216,17 +216,34 @@ pub fn spawn_server(socket_path: &Path, debug: bool) -> io::Result<()> {
     if debug {
         cmd.arg("--debug");
     }
-    let status = cmd.status()?;
 
-    if status.success() {
+    // On Unix the server daemonizes (double-fork) inside start_server(), so
+    // the intermediate child exits immediately and cmd.status() returns.
+    // On Windows there is no daemonize — we launch the server as a detached
+    // process and return immediately.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        cmd.spawn()?;
         Ok(())
-    } else {
-        let msg = "Process returned non-zero exit code";
-        let err_msg = match status.code() {
-            Some(c) => format!("{}: {}", msg, c),
-            None => msg.to_string(),
-        };
-        Err(io::Error::new(io::ErrorKind::Other, err_msg))
+    }
+
+    #[cfg(not(windows))]
+    {
+        let status = cmd.status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            let msg = "Process returned non-zero exit code";
+            let err_msg = match status.code() {
+                Some(c) => format!("{}: {}", msg, c),
+                None => msg.to_string(),
+            };
+            Err(io::Error::new(io::ErrorKind::Other, err_msg))
+        }
     }
 }
 
