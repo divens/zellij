@@ -2,6 +2,52 @@ use super::*;
 
 use zellij_os::pty::{spawn_in_pty, PtySize};
 
+// --- Cross-platform command helpers ---
+
+/// Long-running command (for signal and PTY tests).
+#[cfg(unix)]
+fn long_running_cmd() -> (PathBuf, Vec<String>) {
+    (PathBuf::from("/bin/sleep"), vec!["60".to_string()])
+}
+#[cfg(windows)]
+fn long_running_cmd() -> (PathBuf, Vec<String>) {
+    (
+        PathBuf::from("ping"),
+        vec!["-n".to_string(), "999".to_string(), "127.0.0.1".to_string()],
+    )
+}
+
+/// Echo command (for PTY read tests).
+#[cfg(unix)]
+fn echo_cmd() -> (PathBuf, Vec<String>) {
+    (
+        PathBuf::from("/bin/echo"),
+        vec!["hello from pty".to_string()],
+    )
+}
+#[cfg(windows)]
+fn echo_cmd() -> (PathBuf, Vec<String>) {
+    (
+        PathBuf::from("cmd.exe"),
+        vec![
+            "/c".to_string(),
+            "echo".to_string(),
+            "hello from pty".to_string(),
+        ],
+    )
+}
+
+/// Stdin-reading command (for PTY write tests).
+#[cfg(unix)]
+fn stdin_reader_cmd() -> (PathBuf, Vec<String>) {
+    (PathBuf::from("/bin/cat"), vec![])
+}
+#[cfg(windows)]
+fn stdin_reader_cmd() -> (PathBuf, Vec<String>) {
+    // `more` reads stdin and echoes to stdout; works under ConPTY
+    (PathBuf::from("more"), vec![])
+}
+
 fn make_server() -> ServerOsInputOutput {
     ServerOsInputOutput {
         client_senders: Arc::default(),
@@ -27,10 +73,11 @@ fn get_cwd() {
 #[test]
 fn pty_roundtrip_write_read() {
     // Spawn a simple command via portable-pty and verify we can read its output
+    let (cmd, args) = echo_cmd();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let result = spawn_in_pty(
-        PathBuf::from("/bin/echo"),
-        vec!["hello from pty".to_string()],
+        cmd,
+        args,
         None,
         vec![],
         PtySize {
@@ -80,10 +127,11 @@ fn pty_roundtrip_write_read() {
 
 #[test]
 fn pty_resize() {
+    let (cmd, args) = long_running_cmd();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let result = spawn_in_pty(
-        PathBuf::from("/bin/sleep"),
-        vec!["60".to_string()],
+        cmd,
+        args,
         None,
         vec![],
         PtySize {
@@ -123,10 +171,11 @@ fn pty_resize() {
 
 #[test]
 fn resize_through_server_api() {
+    let (cmd, args) = long_running_cmd();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let result = spawn_in_pty(
-        PathBuf::from("/bin/sleep"),
-        vec!["60".to_string()],
+        cmd,
+        args,
         None,
         vec![],
         PtySize {
@@ -171,12 +220,29 @@ fn resize_through_server_api() {
 
 // --- Signal delivery tests ---
 
+/// Spawn a long-running process for signal tests.
+/// On Windows, console applications need their own console to initialize.
+/// `cargo test` redirects stdout/stderr to pipes, so child processes can't
+/// attach to the parent's console — causing 0xc0000142 (STATUS_DLL_INIT_FAILED).
+/// CREATE_NO_WINDOW gives each child a hidden console so DLL init succeeds.
+fn spawn_long_running() -> std::process::Child {
+    let (cmd, args) = long_running_cmd();
+    let mut command = Command::new(&cmd);
+    command.args(&args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+        .spawn()
+        .expect("failed to spawn long-running process")
+}
+
 #[test]
 fn kill_sends_sighup_to_process() {
-    let child = Command::new("sleep")
-        .arg("60")
-        .spawn()
-        .expect("failed to spawn sleep");
+    let child = spawn_long_running();
     let pid = child.id();
 
     let server = make_server();
@@ -194,10 +260,7 @@ fn kill_sends_sighup_to_process() {
 
 #[test]
 fn force_kill_sends_sigkill_to_process() {
-    let child = Command::new("sleep")
-        .arg("60")
-        .spawn()
-        .expect("failed to spawn sleep");
+    let child = spawn_long_running();
     let pid = child.id();
 
     let server = make_server();
@@ -209,10 +272,7 @@ fn force_kill_sends_sigkill_to_process() {
 
 #[test]
 fn send_sigint_to_process() {
-    let child = Command::new("cat")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .expect("failed to spawn cat");
+    let child = spawn_long_running();
     let pid = child.id();
 
     let server = make_server();
@@ -226,10 +286,11 @@ fn send_sigint_to_process() {
 
 #[test]
 fn write_through_server_os_api() {
+    let (cmd, args) = stdin_reader_cmd();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let result = spawn_in_pty(
-        PathBuf::from("/bin/cat"),
-        vec![],
+        cmd,
+        args,
         None,
         vec![],
         PtySize {
@@ -271,10 +332,11 @@ fn write_through_server_os_api() {
 
 #[test]
 fn cached_resizes_are_applied() {
+    let (cmd, args) = long_running_cmd();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let result = spawn_in_pty(
-        PathBuf::from("/bin/sleep"),
-        vec!["60".to_string()],
+        cmd,
+        args,
         None,
         vec![],
         PtySize {
