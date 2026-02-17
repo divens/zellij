@@ -28,7 +28,48 @@ pub fn signal_process(pid: u32, signal: ProcessSignal) -> Result<()> {
 }
 
 /// Send a signal to a process by PID.
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub fn signal_process(pid: u32, signal: ProcessSignal) -> Result<()> {
+    use windows_sys::Win32::System::Console::{GenerateConsoleCtrlEvent, CTRL_C_EVENT};
+
+    match signal {
+        ProcessSignal::Interrupt => {
+            let ok = unsafe { GenerateConsoleCtrlEvent(CTRL_C_EVENT, pid) };
+            if ok != 0 {
+                Ok(())
+            } else {
+                // Fallback: if GenerateConsoleCtrlEvent fails (e.g. different
+                // process group), terminate the process instead.
+                terminate_process(pid)
+                    .with_context(|| format!("failed to send Interrupt to pid {}", pid))
+            }
+        },
+        ProcessSignal::Kill | ProcessSignal::HangUp => terminate_process(pid)
+            .with_context(|| format!("failed to send {:?} to pid {}", signal, pid)),
+    }
+}
+
+#[cfg(windows)]
+fn terminate_process(pid: u32) -> std::result::Result<(), std::io::Error> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if handle == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let ok = TerminateProcess(handle, 1);
+        CloseHandle(handle);
+        if ok == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
+/// Send a signal to a process by PID.
+#[cfg(not(any(unix, windows)))]
 pub fn signal_process(pid: u32, signal: ProcessSignal) -> Result<()> {
     anyhow::bail!(
         "signal_process not implemented on this platform (pid={}, signal={:?})",
