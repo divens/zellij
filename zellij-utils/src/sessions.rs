@@ -1,3 +1,4 @@
+use crate::consts::ipc_connect;
 use crate::{
     consts::{
         is_ipc_socket, session_info_folder_for_session, session_layout_cache_file_name,
@@ -5,11 +6,10 @@ use crate::{
     },
     envs,
     input::layout::Layout,
-    ipc::{ClientToServerMsg, IpcReceiverWithContext, IpcSenderWithContext, ServerToClientMsg},
+    ipc::{ClientToServerMsg, IpcSenderWithContext},
 };
 use anyhow;
 use humantime::format_duration;
-use interprocess::local_socket::{prelude::*, GenericFilePath, Stream as LocalSocketStream};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 use std::{fs, io, process};
@@ -139,13 +139,11 @@ pub fn get_sessions_sorted_by_mtime() -> anyhow::Result<Vec<String>> {
     }
 }
 
+#[cfg(unix)]
 fn assert_socket(name: &str) -> bool {
+    use crate::ipc::{IpcReceiverWithContext, ServerToClientMsg};
     let path = &*ZELLIJ_SOCK_DIR.join(name);
-    let fs_name = match path.to_fs_name::<GenericFilePath>() {
-        Ok(name) => name,
-        Err(_) => return false,
-    };
-    match LocalSocketStream::connect(fs_name) {
+    match ipc_connect(path) {
         Ok(stream) => {
             let mut sender: IpcSenderWithContext<ClientToServerMsg> =
                 IpcSenderWithContext::new(stream);
@@ -162,6 +160,15 @@ fn assert_socket(name: &str) -> bool {
         },
         Err(_) => false,
     }
+}
+
+// On Windows, the server's accept loop expects paired main+reply pipe connections
+// for every incoming client. A lightweight probe (connect main pipe only) would
+// deadlock the accept loop. Marker file existence is sufficient for discovery;
+// stale marker cleanup is handled by pre-bind remove_file on session restart.
+#[cfg(not(unix))]
+fn assert_socket(_name: &str) -> bool {
+    true
 }
 
 pub fn print_sessions(
@@ -247,14 +254,7 @@ pub fn get_active_session() -> ActiveSession {
 
 pub fn kill_session(name: &str) {
     let path = &*ZELLIJ_SOCK_DIR.join(name);
-    let fs_name = match path.to_fs_name::<GenericFilePath>() {
-        Ok(name) => name,
-        Err(e) => {
-            eprintln!("Error occurred: {:?}", e);
-            process::exit(1);
-        },
-    };
-    match LocalSocketStream::connect(fs_name) {
+    match ipc_connect(path) {
         Ok(stream) => {
             let _ = IpcSenderWithContext::<ClientToServerMsg>::new(stream)
                 .send_client_msg(ClientToServerMsg::KillSession);
@@ -269,15 +269,11 @@ pub fn kill_session(name: &str) {
 pub fn delete_session(name: &str, force: bool) {
     if force {
         let path = &*ZELLIJ_SOCK_DIR.join(name);
-        let _ = path
-            .to_fs_name::<GenericFilePath>()
-            .ok()
-            .and_then(|fs_name| LocalSocketStream::connect(fs_name).ok())
-            .map(|stream| {
-                IpcSenderWithContext::<ClientToServerMsg>::new(stream)
-                    .send_client_msg(ClientToServerMsg::KillSession)
-                    .ok();
-            });
+        let _ = ipc_connect(path).ok().map(|stream| {
+            IpcSenderWithContext::<ClientToServerMsg>::new(stream)
+                .send_client_msg(ClientToServerMsg::KillSession)
+                .ok();
+        });
     }
     if let Err(e) = std::fs::remove_dir_all(session_info_folder_for_session(name)) {
         if e.kind() == std::io::ErrorKind::NotFound {

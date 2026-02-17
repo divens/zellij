@@ -675,7 +675,8 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
     let _ = thread::Builder::new()
         .name("server_listener".to_string())
         .spawn({
-            use interprocess::local_socket::{prelude::*, GenericFilePath, ListenerOptions};
+            use interprocess::local_socket::traits::{Listener, ListenerExt};
+            use zellij_utils::consts::ipc_bind;
             use zellij_utils::shared::set_permissions;
 
             let os_input = os_input.clone();
@@ -685,26 +686,33 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
             let socket_path = socket_path.clone();
             move || {
                 drop(std::fs::remove_file(&socket_path));
-                let listener = ListenerOptions::new()
-                    .name(
-                        socket_path
-                            .as_path()
-                            .to_fs_name::<GenericFilePath>()
-                            .unwrap(),
-                    )
-                    .create_sync()
-                    .unwrap();
+                let listener = ipc_bind(socket_path.as_path()).unwrap();
                 // set the sticky bit to avoid the socket file being potentially cleaned up
                 // https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html states that for XDG_RUNTIME_DIR:
                 // "To ensure that your files are not removed, they should have their access time timestamp modified at least once every 6 hours of monotonic time or the 'sticky' bit should be set on the file. "
                 // It is not guaranteed that all platforms allow setting the sticky bit on sockets!
                 drop(set_permissions(&socket_path, 0o1700));
+                #[cfg(windows)]
+                let reply_listener = {
+                    use zellij_utils::consts::ipc_bind_reply;
+                    ipc_bind_reply(socket_path.as_path()).unwrap()
+                };
                 for stream in listener.incoming() {
                     match stream {
                         Ok(stream) => {
                             let mut os_input = os_input.clone();
                             let client_id = session_state.write().unwrap().new_client();
-                            let receiver = os_input.new_client(client_id, stream).unwrap();
+                            #[cfg(windows)]
+                            let reply_stream = Some(
+                                reply_listener
+                                    .accept()
+                                    .expect("failed to accept reply stream"),
+                            );
+                            #[cfg(not(windows))]
+                            let reply_stream = None;
+                            let receiver = os_input
+                                .new_client(client_id, stream, reply_stream)
+                                .unwrap();
                             let session_data = session_data.clone();
                             let session_state = session_state.clone();
                             let to_server = to_server.clone();
@@ -736,6 +744,7 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
         err_ctx.add_call(ContextType::IPCServer((&instruction).into()));
         match instruction {
             ServerInstruction::FirstClientConnected(cli_assets, is_web_client, client_id) => {
+                info!("FirstClientConnected: loading config and layout");
                 let (config, layout) = cli_assets.load_config_and_layout();
                 let layout_is_welcome_screen = cli_assets.layout
                     == Some(LayoutInfo::BuiltIn("welcome".to_owned()))
@@ -771,6 +780,7 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                     },
                 };
 
+                info!("FirstClientConnected: initializing session");
                 let mut session = init_session(
                     os_input.clone(),
                     to_server.clone(),
@@ -782,6 +792,7 @@ pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
                     config.plugins.clone(),
                     client_id,
                 );
+                info!("FirstClientConnected: session initialized, spawning tabs");
                 let mut runtime_configuration = config.clone();
                 runtime_configuration.options = runtime_config_options.clone();
                 session
@@ -1759,8 +1770,14 @@ fn init_session(
     let default_mode = config_options.default_mode.unwrap_or_default();
     let default_keybinds = config.keybinds.clone();
 
+    // Windows default thread stack is 1MB vs 8MB on Linux. Server worker
+    // threads do heavy work (WASM compilation, layout parsing, PTY creation)
+    // that can overflow 1MB.  Use 8MB everywhere for consistency.
+    const THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
+
     let pty_thread = thread::Builder::new()
         .name("pty".to_string())
+        .stack_size(THREAD_STACK_SIZE)
         .spawn({
             let layout = layout.clone();
             let pty = Pty::new(
@@ -1785,6 +1802,7 @@ fn init_session(
 
     let screen_thread = thread::Builder::new()
         .name("screen".to_string())
+        .stack_size(THREAD_STACK_SIZE)
         .spawn({
             let screen_bus = Bus::new(
                 vec![screen_receiver, bounded_screen_receiver],
@@ -1824,6 +1842,7 @@ fn init_session(
 
     let plugin_thread = thread::Builder::new()
         .name("wasm".to_string())
+        .stack_size(THREAD_STACK_SIZE)
         .spawn({
             let plugin_bus = Bus::new(
                 vec![plugin_receiver],
