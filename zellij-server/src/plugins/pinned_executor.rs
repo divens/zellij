@@ -111,8 +111,12 @@ impl PinnedExecutor {
         let jobs_in_flight = Arc::new(AtomicUsize::new(0));
         let jobs_in_flight_clone = jobs_in_flight.clone();
 
+        // 8MB stack — WASM compilation in wasmi can overflow the Windows
+        // default 1MB stack, causing a silent thread death that blocks the
+        // entire rendering pipeline (no ApplyLayout → no render).
         let thread_handle = thread::Builder::new()
             .name(format!("plugin-exec-{}", thread_idx))
+            .stack_size(8 * 1024 * 1024)
             .spawn({
                 move || {
                     let senders = senders;
