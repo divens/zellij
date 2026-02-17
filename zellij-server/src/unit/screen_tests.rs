@@ -7,6 +7,16 @@ use crate::{
 use insta::assert_snapshot;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
+
+/// Normalize platform-specific path separators in Debug output for snapshot testing.
+#[cfg(not(windows))]
+fn normalize_debug_paths(s: String) -> String {
+    s
+}
+#[cfg(windows)]
+fn normalize_debug_paths(s: String) -> String {
+    s.replace("\\\\", "/")
+}
 use zellij_utils::cli::CliAction;
 use zellij_utils::data::{Event, Resize, Style, WebSharing};
 use zellij_utils::errors::{prelude::*, ErrorContext};
@@ -210,6 +220,7 @@ impl ServerOsApi for FakeInputOutput {
         &mut self,
         _client_id: ClientId,
         _stream: LocalSocketStream,
+        _reply_stream: Option<LocalSocketStream>,
     ) -> Result<IpcReceiverWithContext<ClientToServerMsg>> {
         unimplemented!()
     }
@@ -3556,7 +3567,7 @@ pub fn send_cli_new_tab_action_with_name_and_layout() {
         })
         .unwrap()
         .clone();
-    assert_snapshot!(format!("{:#?}", new_tab_instruction));
+    assert_snapshot!(normalize_debug_paths(format!("{:#?}", new_tab_instruction)));
 }
 
 #[test]

@@ -68,6 +68,7 @@ impl ServerOsApi for FakeInputOutput {
         &mut self,
         _client_id: ClientId,
         _stream: LocalSocketStream,
+        _reply_stream: Option<LocalSocketStream>,
     ) -> Result<IpcReceiverWithContext<ClientToServerMsg>> {
         unimplemented!()
     }

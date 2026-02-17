@@ -98,6 +98,7 @@ pub fn spawn_in_pty(
     size: PtySize,
     quit_cb: Box<dyn FnOnce(Option<i32>) + Send>,
 ) -> Result<SpawnResult> {
+    log::info!("spawn_in_pty: opening PTY for {:?}", cmd);
     let pty_system = native_pty_system();
 
     let pty_size = PortablePtySize {
@@ -172,4 +173,79 @@ pub fn spawn_in_pty(
         },
         child_pid,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Platform-specific echo command.
+    #[cfg(unix)]
+    fn echo_cmd() -> (PathBuf, Vec<String>) {
+        (
+            PathBuf::from("/bin/echo"),
+            vec!["hello from pty".to_string()],
+        )
+    }
+    #[cfg(windows)]
+    fn echo_cmd() -> (PathBuf, Vec<String>) {
+        (
+            PathBuf::from("cmd.exe"),
+            vec![
+                "/c".to_string(),
+                "echo".to_string(),
+                "hello from pty".to_string(),
+            ],
+        )
+    }
+
+    #[test]
+    fn spawn_and_read_output() {
+        let (cmd, args) = echo_cmd();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+
+        let result = spawn_in_pty(
+            cmd,
+            args,
+            None,
+            vec![],
+            PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            },
+            Box::new(move |_exit_status| {
+                let _ = done_tx.send(());
+            }),
+        )
+        .expect("spawn_in_pty should succeed");
+
+        let mut reader = result.pty.try_clone_reader().expect("clone reader");
+        let mut output = String::new();
+        let mut buf = [0u8; 1024];
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_secs(5) {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    output.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if output.contains("hello from pty") {
+                        break;
+                    }
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                },
+                Err(_) => break,
+            }
+        }
+
+        assert!(
+            output.contains("hello from pty"),
+            "should read output from spawned command, got: {:?}",
+            output
+        );
+        let _ = done_rx.recv_timeout(std::time::Duration::from_secs(5));
+    }
 }
