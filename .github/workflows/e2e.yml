@@ -44,6 +44,13 @@ jobs:
       with:
         rustflags: ""
 
+    - name: Cache Rust build artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "e2e"
+        # Don't cache target/ - Docker service mounts it as a volume
+        cache-targets: "false"
+
     - name: Create target folder
       run: mkdir -p ${{ github.workspace }}/target
       # we copy this manually into the target folder instead of mounting it because
