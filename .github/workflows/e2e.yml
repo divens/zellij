@@ -103,6 +103,12 @@ jobs:
           (Get-Content $sshdConfig) -replace 'AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys','#AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys' |
             Set-Content $sshdConfig
 
+          # Configure algorithms for compatibility with libssh2 (WinCNG backend)
+          # libssh2's WinCNG backend only supports older KEX/host-key algorithms,
+          # which newer OpenSSH (9.x on Windows Server 2025) disables by default
+          Add-Content $sshdConfig "`nKexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group-exchange-sha256,diffie-hellman-group14-sha256,diffie-hellman-group14-sha1"
+          Add-Content $sshdConfig "HostKeyAlgorithms ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-512,rsa-sha2-256,ssh-rsa"
+
           # Start the SSH service
           Start-Service sshd
           Set-Service -Name sshd -StartupType Automatic
