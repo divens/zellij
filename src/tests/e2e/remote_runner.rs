@@ -17,13 +17,41 @@ use std::path::Path;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[cfg(not(windows))]
 const ZELLIJ_EXECUTABLE_LOCATION: &str = "/usr/src/zellij/x86_64-unknown-linux-musl/release/zellij";
+#[cfg(windows)]
+const ZELLIJ_EXECUTABLE_LOCATION: &str = "C:\\zellij\\release\\zellij.exe";
+
+#[cfg(not(windows))]
 const SET_ENV_VARIABLES: &str = "EDITOR=/usr/bin/vi";
+#[cfg(windows)]
+const SET_ENV_VARIABLES: &str = "$env:EDITOR='more';";
+
+#[cfg(not(windows))]
 const ZELLIJ_CONFIG_PATH: &str = "/usr/src/zellij/fixtures/configs";
+#[cfg(windows)]
+const ZELLIJ_CONFIG_PATH: &str = "C:\\zellij\\fixtures\\configs";
+
+#[cfg(not(windows))]
 const ZELLIJ_CONFIG_DIRS_PATH: &str = "/usr/src/zellij/fixtures/config-dirs";
+#[cfg(windows)]
+const ZELLIJ_CONFIG_DIRS_PATH: &str = "C:\\zellij\\fixtures\\config-dirs";
+
+#[cfg(not(windows))]
 const ZELLIJ_DATA_DIR: &str = "/usr/src/zellij/e2e-data";
+#[cfg(windows)]
+const ZELLIJ_DATA_DIR: &str = "C:\\zellij\\e2e-data";
+
+#[cfg(not(windows))]
 const ZELLIJ_FIXTURE_PATH: &str = "/usr/src/zellij/fixtures";
+#[cfg(windows)]
+const ZELLIJ_FIXTURE_PATH: &str = "C:\\zellij\\fixtures";
+
+#[cfg(not(windows))]
 const CONNECTION_STRING: &str = "127.0.0.1:2222";
+#[cfg(windows)]
+const CONNECTION_STRING: &str = "127.0.0.1:22";
+
 const CONNECTION_USERNAME: &str = "test";
 const CONNECTION_PASSWORD: &str = "test";
 const SESSION_NAME: &str = "e2e-test";
@@ -55,10 +83,16 @@ fn setup_remote_environment(channel: &mut ssh2::Channel, win_size: Size) {
         .request_pty("xterm", None, Some((columns, rows, 0, 0)))
         .unwrap();
     channel.shell().unwrap();
+    #[cfg(not(windows))]
     channel.write_all(b"export PS1=\"$ \"\n").unwrap();
+    #[cfg(windows)]
+    channel
+        .write_all(b"function prompt { '$ ' }\r\n")
+        .unwrap();
     channel.flush().unwrap();
 }
 
+#[cfg(not(windows))]
 fn stop_zellij(channel: &mut ssh2::Channel) {
     // here we remove the status-bar-tips cache to make sure only the quicknav tip is loaded
     channel
@@ -74,6 +108,30 @@ fn stop_zellij(channel: &mut ssh2::Channel) {
         .unwrap();
     channel
         .write_all(b"rm -rf ~/.cache/zellij/permissions.kdl\n")
+        .unwrap();
+}
+
+#[cfg(windows)]
+fn stop_zellij(channel: &mut ssh2::Channel) {
+    // Kill any running zellij processes
+    channel
+        .write_all(b"Stop-Process -Name zellij -Force -ErrorAction SilentlyContinue\r\n")
+        .unwrap();
+    // Remove status-bar-tips cache
+    channel
+        .write_all(b"Get-ChildItem $env:TEMP -Recurse -Filter '*status-bar-tips*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue\r\n")
+        .unwrap();
+    // Remove temporary artifacts from previous tests
+    channel
+        .write_all(b"Remove-Item \"$env:TEMP\\zellij*\" -Recurse -Force -ErrorAction SilentlyContinue\r\n")
+        .unwrap();
+    // Remove session info cache
+    channel
+        .write_all(b"Remove-Item \"$env:LOCALAPPDATA\\zellij\\*\\session_info\" -Recurse -Force -ErrorAction SilentlyContinue\r\n")
+        .unwrap();
+    // Remove permissions cache
+    channel
+        .write_all(b"Remove-Item \"$env:LOCALAPPDATA\\zellij\\permissions.kdl\" -Force -ErrorAction SilentlyContinue\r\n")
         .unwrap();
 }
 
@@ -94,11 +152,12 @@ fn start_zellij(channel: &mut ssh2::Channel) {
 
 fn start_zellij_with_config_dir(channel: &mut ssh2::Channel, config_dir: &str) {
     stop_zellij(channel);
+    let config_dir_path = Path::new(ZELLIJ_CONFIG_DIRS_PATH).join(config_dir);
     channel
         .write_all(
             format!(
                 "{} {} --session {} --data-dir {} --config-dir {} options --show-release-notes false --show-startup-tips false\n",
-                SET_ENV_VARIABLES, ZELLIJ_EXECUTABLE_LOCATION, SESSION_NAME, ZELLIJ_DATA_DIR, format!("{}/{}", ZELLIJ_CONFIG_DIRS_PATH, config_dir)
+                SET_ENV_VARIABLES, ZELLIJ_EXECUTABLE_LOCATION, SESSION_NAME, ZELLIJ_DATA_DIR, config_dir_path.display()
             )
             .as_bytes(),
         )
@@ -124,6 +183,7 @@ fn start_zellij_mirrored_session(channel: &mut ssh2::Channel) {
 
 fn start_zellij_mirrored_session_with_layout(channel: &mut ssh2::Channel, layout_file_name: &str) {
     stop_zellij(channel);
+    let layout_path = Path::new(ZELLIJ_FIXTURE_PATH).join(layout_file_name);
     channel
         .write_all(
             format!(
@@ -132,7 +192,7 @@ fn start_zellij_mirrored_session_with_layout(channel: &mut ssh2::Channel, layout
                 ZELLIJ_EXECUTABLE_LOCATION,
                 SESSION_NAME,
                 ZELLIJ_DATA_DIR,
-                format!("{}/{}", ZELLIJ_FIXTURE_PATH, layout_file_name)
+                layout_path.display()
             )
             .as_bytes(),
         )
@@ -146,6 +206,7 @@ fn start_zellij_mirrored_session_with_layout_and_viewport_serialization(
     layout_file_name: &str,
 ) {
     stop_zellij(channel);
+    let layout_path = Path::new(ZELLIJ_FIXTURE_PATH).join(layout_file_name);
     channel
         .write_all(
             format!(
@@ -154,7 +215,7 @@ fn start_zellij_mirrored_session_with_layout_and_viewport_serialization(
                 ZELLIJ_EXECUTABLE_LOCATION,
                 SESSION_NAME,
                 ZELLIJ_DATA_DIR,
-                format!("{}/{}", ZELLIJ_FIXTURE_PATH, layout_file_name)
+                layout_path.display()
             )
             .as_bytes(),
         )
@@ -481,9 +542,11 @@ impl RemoteTerminal {
     }
     pub fn load_fixture(&mut self, name: &str) {
         let mut channel = self.channel.lock().unwrap();
-        channel
-            .write_all(format!("cat {ZELLIJ_FIXTURE_PATH}/{name}\n").as_bytes())
-            .unwrap();
+        #[cfg(not(windows))]
+        let cmd = format!("cat {ZELLIJ_FIXTURE_PATH}/{name}\n");
+        #[cfg(windows)]
+        let cmd = format!("Get-Content '{ZELLIJ_FIXTURE_PATH}\\{name}' -Raw\r\n");
+        channel.write_all(cmd.as_bytes()).unwrap();
         channel.flush().unwrap();
     }
 }
