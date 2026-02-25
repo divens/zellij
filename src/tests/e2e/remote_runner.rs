@@ -53,7 +53,10 @@ const CONNECTION_STRING: &str = "127.0.0.1:2222";
 const CONNECTION_STRING: &str = "127.0.0.1:22";
 
 const CONNECTION_USERNAME: &str = "test";
+#[cfg(not(windows))]
 const CONNECTION_PASSWORD: &str = "test";
+#[cfg(windows)]
+const CONNECTION_PASSWORD: &str = "T3st!Pass";
 const SESSION_NAME: &str = "e2e-test";
 const RETRIES: usize = 10;
 

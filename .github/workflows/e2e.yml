@@ -109,7 +109,7 @@ jobs:
 
       - name: Create test user
         run: |
-          $password = ConvertTo-SecureString "test" -AsPlainText -Force
+          $password = ConvertTo-SecureString "T3st!Pass" -AsPlainText -Force
           New-LocalUser -Name "test" -Password $password -PasswordNeverExpires -UserMayNotChangePassword
           Add-LocalGroupMember -Group "Administrators" -Member "test"
 
