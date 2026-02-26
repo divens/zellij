@@ -61,23 +61,33 @@ const SESSION_NAME: &str = "e2e-test";
 const RETRIES: usize = 10;
 
 fn ssh_connect() -> ssh2::Session {
-    let tcp = TcpStream::connect(CONNECTION_STRING).unwrap();
-    let mut sess = Session::new().unwrap();
-    sess.set_tcp_stream(tcp);
-    sess.handshake().unwrap();
-    sess.userauth_password(CONNECTION_USERNAME, CONNECTION_PASSWORD)
-        .unwrap();
-    sess
+    ssh_connect_with_retries()
 }
 
 fn ssh_connect_without_timeout() -> ssh2::Session {
-    let tcp = TcpStream::connect(CONNECTION_STRING).unwrap();
-    let mut sess = Session::new().unwrap();
-    sess.set_tcp_stream(tcp);
-    sess.handshake().unwrap();
-    sess.userauth_password(CONNECTION_USERNAME, CONNECTION_PASSWORD)
-        .unwrap();
-    sess
+    ssh_connect_with_retries()
+}
+
+fn ssh_connect_with_retries() -> ssh2::Session {
+    let max_retries = 3;
+    for attempt in 0..max_retries {
+        let tcp = TcpStream::connect(CONNECTION_STRING).unwrap();
+        let mut sess = Session::new().unwrap();
+        sess.set_tcp_stream(tcp);
+        match sess.handshake() {
+            Ok(()) => {
+                sess.userauth_password(CONNECTION_USERNAME, CONNECTION_PASSWORD)
+                    .unwrap();
+                return sess;
+            },
+            Err(e) if attempt < max_retries - 1 => {
+                eprintln!("SSH handshake attempt {} failed: {}, retrying...", attempt + 1, e);
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            },
+            Err(e) => panic!("SSH handshake failed after {} attempts: {}", max_retries, e),
+        }
+    }
+    unreachable!()
 }
 
 fn setup_remote_environment(channel: &mut ssh2::Channel, win_size: Size) {
@@ -89,9 +99,19 @@ fn setup_remote_environment(channel: &mut ssh2::Channel, win_size: Size) {
     #[cfg(not(windows))]
     channel.write_all(b"export PS1=\"$ \"\n").unwrap();
     #[cfg(windows)]
-    channel
-        .write_all(b"function prompt { '$ ' }\r\n")
-        .unwrap();
+    {
+        // Disable PSReadLine to prevent paste detection from buffering rapidly-sent
+        // commands (PSReadLine on Windows Server 2025 treats rapid input as a paste
+        // and shows >> continuation prompts instead of executing each line)
+        channel
+            .write_all(b"Remove-Module PSReadLine -ErrorAction SilentlyContinue\r\n")
+            .unwrap();
+        channel.flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        channel
+            .write_all(b"function prompt { '$ ' }\r\n")
+            .unwrap();
+    }
     channel.flush().unwrap();
 }
 
