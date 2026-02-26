@@ -61,3 +61,101 @@ jobs:
         args: docker restart ssh
     - name: Test
       run: cargo xtask ci e2e --test
+
+  test-e2e-windows:
+    name: E2E tests (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-wasip1
+          cache: false
+          rustflags: ""
+
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: Install and configure OpenSSH Server
+        run: |
+          # Install OpenSSH Server
+          Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+
+          # Stop sshd in case it was auto-started during installation
+          Stop-Service sshd -ErrorAction SilentlyContinue
+
+          # Set PowerShell as default shell for OpenSSH
+          New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell `
+            -Value "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -PropertyType String -Force
+
+          # Ensure all host key types are generated
+          & "C:\Windows\System32\OpenSSH\ssh-keygen.exe" -A 2>$null
+
+          # Configure sshd for password authentication
+          $sshdConfig = "C:\ProgramData\ssh\sshd_config"
+          (Get-Content $sshdConfig) -replace '#PasswordAuthentication yes','PasswordAuthentication yes' |
+            Set-Content $sshdConfig
+          (Get-Content $sshdConfig) -replace 'Match Group administrators','#Match Group administrators' |
+            Set-Content $sshdConfig
+          (Get-Content $sshdConfig) -replace 'AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys','#AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys' |
+            Set-Content $sshdConfig
+
+          # Configure algorithms for compatibility with libssh2 (WinCNG backend)
+          # libssh2's WinCNG backend only supports older KEX/host-key algorithms,
+          # which newer OpenSSH (9.x on Windows Server 2025) disables by default
+          Add-Content $sshdConfig "`nKexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group-exchange-sha256,diffie-hellman-group14-sha256,diffie-hellman-group14-sha1"
+          Add-Content $sshdConfig "HostKeyAlgorithms ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-512,rsa-sha2-256,ssh-rsa"
+
+          # Start the SSH service (with updated config)
+          Start-Service sshd
+          Set-Service -Name sshd -StartupType Automatic
+
+      - name: Verify SSH server
+        run: |
+          Get-Service sshd | Format-List Name, Status, StartType
+          Write-Host "--- Host keys ---"
+          Get-ChildItem "C:\ProgramData\ssh\ssh_host_*" | ForEach-Object { $_.Name }
+          Write-Host "--- sshd_config (algorithm lines) ---"
+          Get-Content "C:\ProgramData\ssh\sshd_config" | Select-String -Pattern "KexAlgorithms|HostKeyAlgorithms|PasswordAuthentication"
+
+      - name: Create test user
+        run: |
+          $password = ConvertTo-SecureString "T3st!Pass" -AsPlainText -Force
+          New-LocalUser -Name "test" -Password $password -PasswordNeverExpires -UserMayNotChangePassword
+          Add-LocalGroupMember -Group "Administrators" -Member "test"
+
+      - name: Build E2E binary and plugins
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+        run: cargo xtask ci e2e --build
+
+      - name: Deploy binary and test data
+        run: |
+          # Create deployment directory
+          New-Item -ItemType Directory -Path "C:\zellij\release" -Force
+          New-Item -ItemType Directory -Path "C:\zellij\e2e-data" -Force
+          New-Item -ItemType Directory -Path "C:\zellij\fixtures" -Force
+
+          # Copy binary
+          Copy-Item "target\release\zellij.exe" "C:\zellij\release\zellij.exe"
+
+          # Copy e2e data (plugins)
+          Copy-Item "target\e2e-data\*" "C:\zellij\e2e-data\" -Recurse
+
+          # Copy fixtures
+          Copy-Item "src\tests\fixtures\*" "C:\zellij\fixtures\" -Recurse
+
+          # Grant test user access
+          icacls "C:\zellij" /grant "test:(OI)(CI)F" /T
+
+      - name: Run E2E tests
+        run: cargo test --no-default-features -- --ignored --nocapture --test-threads 1

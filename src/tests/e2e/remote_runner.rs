@@ -17,36 +17,77 @@ use std::path::Path;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[cfg(not(windows))]
 const ZELLIJ_EXECUTABLE_LOCATION: &str = "/usr/src/zellij/x86_64-unknown-linux-musl/release/zellij";
+#[cfg(windows)]
+const ZELLIJ_EXECUTABLE_LOCATION: &str = "C:\\zellij\\release\\zellij.exe";
+
+#[cfg(not(windows))]
 const SET_ENV_VARIABLES: &str = "EDITOR=/usr/bin/vi";
+#[cfg(windows)]
+const SET_ENV_VARIABLES: &str = "$env:EDITOR='more';";
+
+#[cfg(not(windows))]
 const ZELLIJ_CONFIG_PATH: &str = "/usr/src/zellij/fixtures/configs";
+#[cfg(windows)]
+const ZELLIJ_CONFIG_PATH: &str = "C:\\zellij\\fixtures\\configs";
+
+#[cfg(not(windows))]
 const ZELLIJ_CONFIG_DIRS_PATH: &str = "/usr/src/zellij/fixtures/config-dirs";
+#[cfg(windows)]
+const ZELLIJ_CONFIG_DIRS_PATH: &str = "C:\\zellij\\fixtures\\config-dirs";
+
+#[cfg(not(windows))]
 const ZELLIJ_DATA_DIR: &str = "/usr/src/zellij/e2e-data";
+#[cfg(windows)]
+const ZELLIJ_DATA_DIR: &str = "C:\\zellij\\e2e-data";
+
+#[cfg(not(windows))]
 const ZELLIJ_FIXTURE_PATH: &str = "/usr/src/zellij/fixtures";
+#[cfg(windows)]
+const ZELLIJ_FIXTURE_PATH: &str = "C:\\zellij\\fixtures";
+
+#[cfg(not(windows))]
 const CONNECTION_STRING: &str = "127.0.0.1:2222";
+#[cfg(windows)]
+const CONNECTION_STRING: &str = "127.0.0.1:22";
+
 const CONNECTION_USERNAME: &str = "test";
+#[cfg(not(windows))]
 const CONNECTION_PASSWORD: &str = "test";
+#[cfg(windows)]
+const CONNECTION_PASSWORD: &str = "T3st!Pass";
 const SESSION_NAME: &str = "e2e-test";
 const RETRIES: usize = 10;
 
 fn ssh_connect() -> ssh2::Session {
-    let tcp = TcpStream::connect(CONNECTION_STRING).unwrap();
-    let mut sess = Session::new().unwrap();
-    sess.set_tcp_stream(tcp);
-    sess.handshake().unwrap();
-    sess.userauth_password(CONNECTION_USERNAME, CONNECTION_PASSWORD)
-        .unwrap();
-    sess
+    ssh_connect_with_retries()
 }
 
 fn ssh_connect_without_timeout() -> ssh2::Session {
-    let tcp = TcpStream::connect(CONNECTION_STRING).unwrap();
-    let mut sess = Session::new().unwrap();
-    sess.set_tcp_stream(tcp);
-    sess.handshake().unwrap();
-    sess.userauth_password(CONNECTION_USERNAME, CONNECTION_PASSWORD)
-        .unwrap();
-    sess
+    ssh_connect_with_retries()
+}
+
+fn ssh_connect_with_retries() -> ssh2::Session {
+    let max_retries = 3;
+    for attempt in 0..max_retries {
+        let tcp = TcpStream::connect(CONNECTION_STRING).unwrap();
+        let mut sess = Session::new().unwrap();
+        sess.set_tcp_stream(tcp);
+        match sess.handshake() {
+            Ok(()) => {
+                sess.userauth_password(CONNECTION_USERNAME, CONNECTION_PASSWORD)
+                    .unwrap();
+                return sess;
+            },
+            Err(e) if attempt < max_retries - 1 => {
+                eprintln!("SSH handshake attempt {} failed: {}, retrying...", attempt + 1, e);
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            },
+            Err(e) => panic!("SSH handshake failed after {} attempts: {}", max_retries, e),
+        }
+    }
+    unreachable!()
 }
 
 fn setup_remote_environment(channel: &mut ssh2::Channel, win_size: Size) {
@@ -55,10 +96,26 @@ fn setup_remote_environment(channel: &mut ssh2::Channel, win_size: Size) {
         .request_pty("xterm", None, Some((columns, rows, 0, 0)))
         .unwrap();
     channel.shell().unwrap();
+    #[cfg(not(windows))]
     channel.write_all(b"export PS1=\"$ \"\n").unwrap();
+    #[cfg(windows)]
+    {
+        // Disable PSReadLine to prevent paste detection from buffering rapidly-sent
+        // commands (PSReadLine on Windows Server 2025 treats rapid input as a paste
+        // and shows >> continuation prompts instead of executing each line)
+        channel
+            .write_all(b"Remove-Module PSReadLine -ErrorAction SilentlyContinue\r\n")
+            .unwrap();
+        channel.flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        channel
+            .write_all(b"function prompt { '$ ' }\r\n")
+            .unwrap();
+    }
     channel.flush().unwrap();
 }
 
+#[cfg(not(windows))]
 fn stop_zellij(channel: &mut ssh2::Channel) {
     // here we remove the status-bar-tips cache to make sure only the quicknav tip is loaded
     channel
@@ -77,12 +134,36 @@ fn stop_zellij(channel: &mut ssh2::Channel) {
         .unwrap();
 }
 
+#[cfg(windows)]
+fn stop_zellij(channel: &mut ssh2::Channel) {
+    // Kill any running zellij processes
+    channel
+        .write_all(b"Stop-Process -Name zellij -Force -ErrorAction SilentlyContinue\r\n")
+        .unwrap();
+    // Remove status-bar-tips cache
+    channel
+        .write_all(b"Get-ChildItem $env:TEMP -Recurse -Filter '*status-bar-tips*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue\r\n")
+        .unwrap();
+    // Remove temporary artifacts from previous tests
+    channel
+        .write_all(b"Remove-Item \"$env:TEMP\\zellij*\" -Recurse -Force -ErrorAction SilentlyContinue\r\n")
+        .unwrap();
+    // Remove session info cache
+    channel
+        .write_all(b"Remove-Item \"$env:LOCALAPPDATA\\zellij\\*\\session_info\" -Recurse -Force -ErrorAction SilentlyContinue\r\n")
+        .unwrap();
+    // Remove permissions cache
+    channel
+        .write_all(b"Remove-Item \"$env:LOCALAPPDATA\\zellij\\permissions.kdl\" -Force -ErrorAction SilentlyContinue\r\n")
+        .unwrap();
+}
+
 fn start_zellij(channel: &mut ssh2::Channel) {
     stop_zellij(channel);
     channel
         .write_all(
             format!(
-                "{} {} --session {} --data-dir {} options --show-release-notes false --show-startup-tips false\n",
+                "{} {} --session {} --data-dir {} options --show-release-notes false --show-startup-tips false\r\n",
                 SET_ENV_VARIABLES, ZELLIJ_EXECUTABLE_LOCATION, SESSION_NAME, ZELLIJ_DATA_DIR
             )
             .as_bytes(),
@@ -94,11 +175,12 @@ fn start_zellij(channel: &mut ssh2::Channel) {
 
 fn start_zellij_with_config_dir(channel: &mut ssh2::Channel, config_dir: &str) {
     stop_zellij(channel);
+    let config_dir_path = Path::new(ZELLIJ_CONFIG_DIRS_PATH).join(config_dir);
     channel
         .write_all(
             format!(
-                "{} {} --session {} --data-dir {} --config-dir {} options --show-release-notes false --show-startup-tips false\n",
-                SET_ENV_VARIABLES, ZELLIJ_EXECUTABLE_LOCATION, SESSION_NAME, ZELLIJ_DATA_DIR, format!("{}/{}", ZELLIJ_CONFIG_DIRS_PATH, config_dir)
+                "{} {} --session {} --data-dir {} --config-dir {} options --show-release-notes false --show-startup-tips false\r\n",
+                SET_ENV_VARIABLES, ZELLIJ_EXECUTABLE_LOCATION, SESSION_NAME, ZELLIJ_DATA_DIR, config_dir_path.display()
             )
             .as_bytes(),
         )
@@ -112,7 +194,7 @@ fn start_zellij_mirrored_session(channel: &mut ssh2::Channel) {
     channel
         .write_all(
             format!(
-                "{} {} --session {} --data-dir {} options --show-release-notes false --show-startup-tips false --mirror-session true --serialization-interval 1\n",
+                "{} {} --session {} --data-dir {} options --show-release-notes false --show-startup-tips false --mirror-session true --serialization-interval 1\r\n",
                 SET_ENV_VARIABLES, ZELLIJ_EXECUTABLE_LOCATION, SESSION_NAME, ZELLIJ_DATA_DIR
             )
             .as_bytes(),
@@ -124,15 +206,16 @@ fn start_zellij_mirrored_session(channel: &mut ssh2::Channel) {
 
 fn start_zellij_mirrored_session_with_layout(channel: &mut ssh2::Channel, layout_file_name: &str) {
     stop_zellij(channel);
+    let layout_path = Path::new(ZELLIJ_FIXTURE_PATH).join(layout_file_name);
     channel
         .write_all(
             format!(
-                "{} {} --session {} --data-dir {} --new-session-with-layout {} options --show-release-notes false --show-startup-tips false --mirror-session true --serialization-interval 1\n",
+                "{} {} --session {} --data-dir {} --new-session-with-layout {} options --show-release-notes false --show-startup-tips false --mirror-session true --serialization-interval 1\r\n",
                 SET_ENV_VARIABLES,
                 ZELLIJ_EXECUTABLE_LOCATION,
                 SESSION_NAME,
                 ZELLIJ_DATA_DIR,
-                format!("{}/{}", ZELLIJ_FIXTURE_PATH, layout_file_name)
+                layout_path.display()
             )
             .as_bytes(),
         )
@@ -146,15 +229,16 @@ fn start_zellij_mirrored_session_with_layout_and_viewport_serialization(
     layout_file_name: &str,
 ) {
     stop_zellij(channel);
+    let layout_path = Path::new(ZELLIJ_FIXTURE_PATH).join(layout_file_name);
     channel
         .write_all(
             format!(
-                "{} {} --session {} --data-dir {} --new-session-with-layout {} options --show-release-notes false --show-startup-tips false --mirror-session true --serialize-pane-viewport true --serialization-interval 1\n",
+                "{} {} --session {} --data-dir {} --new-session-with-layout {} options --show-release-notes false --show-startup-tips false --mirror-session true --serialize-pane-viewport true --serialization-interval 1\r\n",
                 SET_ENV_VARIABLES,
                 ZELLIJ_EXECUTABLE_LOCATION,
                 SESSION_NAME,
                 ZELLIJ_DATA_DIR,
-                format!("{}/{}", ZELLIJ_FIXTURE_PATH, layout_file_name)
+                layout_path.display()
             )
             .as_bytes(),
         )
@@ -168,7 +252,7 @@ fn start_zellij_in_session(channel: &mut ssh2::Channel, session_name: &str, mirr
     channel
         .write_all(
             format!(
-                "{} {} --session {} --data-dir {} options --show-release-notes false --show-startup-tips false --mirror-session {}\n",
+                "{} {} --session {} --data-dir {} options --show-release-notes false --show-startup-tips false --mirror-session {}\r\n",
                 SET_ENV_VARIABLES,
                 ZELLIJ_EXECUTABLE_LOCATION,
                 session_name,
@@ -186,7 +270,7 @@ fn attach_to_existing_session(channel: &mut ssh2::Channel, session_name: &str) {
     channel
         .write_all(
             format!(
-                "{} {} attach {}\n",
+                "{} {} attach {}\r\n",
                 SET_ENV_VARIABLES, ZELLIJ_EXECUTABLE_LOCATION, session_name
             )
             .as_bytes(),
@@ -200,7 +284,7 @@ fn watch_existing_session(channel: &mut ssh2::Channel, session_name: &str) {
     channel
         .write_all(
             format!(
-                "{} {} watch {}\n",
+                "{} {} watch {}\r\n",
                 SET_ENV_VARIABLES, ZELLIJ_EXECUTABLE_LOCATION, session_name
             )
             .as_bytes(),
@@ -215,7 +299,7 @@ fn start_zellij_without_frames(channel: &mut ssh2::Channel) {
     channel
         .write_all(
             format!(
-                "{} {} --session {} --data-dir {} options --show-release-notes false --show-startup-tips false --pane-frames false\n",
+                "{} {} --session {} --data-dir {} options --show-release-notes false --show-startup-tips false --pane-frames false\r\n",
                 SET_ENV_VARIABLES, ZELLIJ_EXECUTABLE_LOCATION, SESSION_NAME, ZELLIJ_DATA_DIR
             )
             .as_bytes(),
@@ -230,7 +314,7 @@ fn start_zellij_with_config(channel: &mut ssh2::Channel, config_path: &str) {
     channel
         .write_all(
             format!(
-                "{} {} --config {} --session {} --data-dir {} options --show-release-notes false --show-startup-tips false\n",
+                "{} {} --config {} --session {} --data-dir {} options --show-release-notes false --show-startup-tips false\r\n",
                 SET_ENV_VARIABLES,
                 ZELLIJ_EXECUTABLE_LOCATION,
                 config_path,
@@ -434,7 +518,7 @@ impl RemoteTerminal {
         let mut channel = self.channel.lock().unwrap();
         channel
             .write_all(
-                format!("{} attach {}\n", ZELLIJ_EXECUTABLE_LOCATION, SESSION_NAME).as_bytes(),
+                format!("{} attach {}\r\n", ZELLIJ_EXECUTABLE_LOCATION, SESSION_NAME).as_bytes(),
             )
             .unwrap();
         channel.flush().unwrap();
@@ -481,9 +565,11 @@ impl RemoteTerminal {
     }
     pub fn load_fixture(&mut self, name: &str) {
         let mut channel = self.channel.lock().unwrap();
-        channel
-            .write_all(format!("cat {ZELLIJ_FIXTURE_PATH}/{name}\n").as_bytes())
-            .unwrap();
+        #[cfg(not(windows))]
+        let cmd = format!("cat {ZELLIJ_FIXTURE_PATH}/{name}\n");
+        #[cfg(windows)]
+        let cmd = format!("Get-Content '{ZELLIJ_FIXTURE_PATH}\\{name}' -Raw\r\n");
+        channel.write_all(cmd.as_bytes()).unwrap();
         channel.flush().unwrap();
     }
 }

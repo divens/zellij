@@ -1,6 +1,5 @@
 #![allow(unused)]
 
-use insta::assert_snapshot;
 use zellij_utils::{
     pane_size::Size,
     position::{Column, Line, Position},
@@ -20,6 +19,23 @@ use crate::tests::e2e::steps::{
 };
 
 use super::remote_runner::{RemoteRunner, RemoteTerminal, Step};
+
+/// Shadow `insta::assert_snapshot!` so that on Windows, snapshots are automatically
+/// stored with a `@windows` suffix (e.g. `*@windows.snap`). On Unix this is a no-op
+/// passthrough to the real macro.
+macro_rules! assert_snapshot {
+    ($($args:tt)*) => {
+        {
+            #[cfg(windows)]
+            let _guard = {
+                let mut settings = insta::Settings::clone_current();
+                settings.set_snapshot_suffix("windows");
+                settings.bind_to_thread()
+            };
+            insta::assert_snapshot!($($args)*);
+        }
+    };
+}
 
 pub const QUIT: [u8; 1] = [17]; // ctrl-q
 pub const ESC: [u8; 1] = [27];
@@ -2312,10 +2328,14 @@ pub fn send_command_through_the_cli() {
                         && remote_terminal.cursor_position_is(3, 2)
                     {
                         let fixture_folder = remote_terminal.path_to_fixture_folder();
-                        remote_terminal.send_command_through_the_cli(&format!(
-                            "{}/append-echo-script.sh",
+                        #[cfg(not(windows))]
+                        let script = format!("{}/append-echo-script.sh", fixture_folder);
+                        #[cfg(windows)]
+                        let script = format!(
+                            "powershell -File {}\\append-echo-script.ps1",
                             fixture_folder
-                        ));
+                        );
+                        remote_terminal.send_command_through_the_cli(&script);
                         std::thread::sleep(std::time::Duration::from_millis(100));
                         remote_terminal.send_key(&ENTER);
                         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -2421,12 +2441,14 @@ pub fn send_blocking_command_through_the_cli() {
                         && remote_terminal.cursor_position_is(3, 2)
                     {
                         // Send a command that sleeps for 2 seconds then exits with status 42
-                        // Using bash -c with proper escaping
-                        // remote_terminal.send_key("aaa\n".as_bytes());
                         std::thread::sleep(std::time::Duration::from_millis(100));
+                        #[cfg(not(windows))]
                         remote_terminal.send_blocking_command_through_the_cli(
-                            // "lskdjlskdjf"
                             "bash -c 'sleep 2 && exit 42'",
+                        );
+                        #[cfg(windows)]
+                        remote_terminal.send_blocking_command_through_the_cli(
+                            "powershell -Command \"Start-Sleep 2; exit 42\"",
                         );
                         std::thread::sleep(std::time::Duration::from_millis(100));
                         remote_terminal.send_key(&ENTER);
@@ -2457,7 +2479,10 @@ pub fn send_blocking_command_through_the_cli() {
                     // After 2+ seconds, the command should complete and the floating pane should close
                     // then we do echo $? to make sure we got back its exit status
                     if !remote_terminal.snapshot_contains("PIN [ ]") {
+                        #[cfg(not(windows))]
                         remote_terminal.send_key("echo $?".as_bytes());
+                        #[cfg(windows)]
+                        remote_terminal.send_key("echo $LASTEXITCODE".as_bytes());
                         std::thread::sleep(std::time::Duration::from_millis(100));
                         remote_terminal.send_key(&ENTER);
                         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -2472,7 +2497,11 @@ pub fn send_blocking_command_through_the_cli() {
             name: "Verify CLI returned with proper exit status after command completed",
             instruction: |remote_terminal: RemoteTerminal| -> bool {
                 let mut step_is_complete = false;
-                if remote_terminal.snapshot_contains("echo $?")
+                #[cfg(not(windows))]
+                let exit_code_cmd = "echo $?";
+                #[cfg(windows)]
+                let exit_code_cmd = "echo $LASTEXITCODE";
+                if remote_terminal.snapshot_contains(exit_code_cmd)
                     && remote_terminal.status_bar_appears()
                 {
                     step_is_complete = true
@@ -2676,7 +2705,10 @@ pub fn watcher_client_functionality() {
         main_client = main_client.add_step(Step {
             name: "Start background output loop",
             instruction: |mut remote_terminal: RemoteTerminal| -> bool {
+                #[cfg(not(windows))]
                 remote_terminal.send_key(b"{ for i in 1 2 3; do sleep 1; echo \"WATCHER_OUTPUT_$i\"; done & } 2>/dev/null");
+                #[cfg(windows)]
+                remote_terminal.send_key(b"1..3 | ForEach-Object { Start-Sleep 1; Write-Output \"WATCHER_OUTPUT_$_\" }");
                 std::thread::sleep(std::time::Duration::from_millis(100));
                 remote_terminal.send_key(&ENTER);
                 true
