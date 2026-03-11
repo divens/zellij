@@ -36,6 +36,7 @@ url = { workspace = true }
 uuid = { workspace = true }
 include_dir = { workspace = true }
 zellij-utils = { workspace = true }
+stacker = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 isahc = { workspace = true }

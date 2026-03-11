@@ -28,9 +28,19 @@ names = { workspace = true }
 suggest = { workspace = true }
 thiserror = { workspace = true }
 isahc = { workspace = true }
+stacker = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }
+backtrace-on-stack-overflow = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Kernel",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 insta = { version = "1.6.0", features = ["backtrace"] }
@@ -111,6 +121,7 @@ windows-sys = { version = "0.52", default-features = false }
 names = { version = "0.14.0", default-features = false }
 include_dir = { version = "0.7.3", default-features = false }
 sha2 = { version = "0.10", default-features = false }
+stacker = { version = "0.1", default-features = false }
 zellij-utils = { path = "zellij-utils/", version = "0.44.0" }
 
 [profile.dev-opt]

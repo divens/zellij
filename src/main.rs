@@ -1,4 +1,6 @@
 mod commands;
+#[cfg(debug_assertions)]
+mod stack_diagnostics;
 #[cfg(test)]
 mod tests;
 
@@ -15,9 +17,25 @@ use zellij_utils::{
 };
 
 fn main() {
+    #[cfg(debug_assertions)]
+    {
+        // Install a handler that prints a backtrace on stack overflow instead
+        // of silently aborting.  Also print the initial remaining stack.
+        unsafe { stack_diagnostics::enable_overflow_handler() };
+        stack_diagnostics::probe("main() entry");
+    }
+
     configure_logger();
     create_config_and_cache_folders();
-    let opts = CliArgs::parse();
+
+    // The clap-derived `augment_subcommands` for `CliAction` (~70 variants) produces
+    // a stack frame so large in debug mode that it overflows the Windows default 1 MB
+    // main-thread stack.  `stacker::maybe_grow` transparently allocates a temporary
+    // heap-backed stack when the remaining stack falls below `red_zone`.
+    //
+    // red_zone must exceed the ~914 KB remaining at this point on a 1 MB Windows stack,
+    // otherwise stacker won't trigger the grow.
+    let opts = stacker::maybe_grow(1024 * 1024, 2 * 1024 * 1024, || CliArgs::parse());
 
     {
         let config = Config::try_from(&opts).ok();

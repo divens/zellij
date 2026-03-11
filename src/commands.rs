@@ -158,6 +158,9 @@ fn get_os_input<OsInputOutput>(
 }
 
 pub(crate) fn start_server(path: PathBuf, debug: bool) {
+    #[cfg(debug_assertions)]
+    crate::stack_diagnostics::probe("start_server() entry");
+
     // Set instance-wide debug mode
     zellij_utils::consts::DEBUG_MODE.set(debug).unwrap();
     let os_input = get_os_input(get_server_os_input);
@@ -662,6 +665,9 @@ fn attach_with_session_name(
 }
 
 pub(crate) fn start_client(opts: CliArgs) {
+    #[cfg(debug_assertions)]
+    crate::stack_diagnostics::probe("start_client() entry");
+
     // look for old YAML config/layout/theme files and convert them to KDL
     convert_old_yaml_files(&opts);
     let (
@@ -682,6 +688,9 @@ pub(crate) fn start_client(opts: CliArgs) {
             process::exit(1);
         },
     };
+
+    #[cfg(debug_assertions)]
+    crate::stack_diagnostics::probe("start_client() after Setup::from_cli_args");
 
     let mut reconnect_to_session: Option<ConnectToSession> = None;
     let os_input = get_os_input(get_client_os_input);

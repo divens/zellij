@@ -76,6 +76,23 @@ use zellij_utils::{
 
 pub type ClientId = u16;
 
+/// Print the remaining stack space at the current call site.
+/// Only compiled in debug builds.
+#[cfg(debug_assertions)]
+fn stack_probe(label: &str) {
+    match stacker::remaining_stack() {
+        Some(remaining) => {
+            eprintln!(
+                "[stack-probe] {label}: {remaining} bytes remaining ({} KB)",
+                remaining / 1024
+            );
+        },
+        None => {
+            eprintln!("[stack-probe] {label}: remaining_stack() unavailable");
+        },
+    }
+}
+
 /// Instructions related to server-side application
 #[derive(Debug, Clone)]
 pub enum ServerInstruction {
@@ -650,6 +667,9 @@ impl SessionState {
 }
 
 pub fn start_server(mut os_input: Box<dyn ServerOsApi>, socket_path: PathBuf) {
+    #[cfg(debug_assertions)]
+    stack_probe("zellij_server::start_server() entry");
+
     info!("Starting Zellij server!");
 
     #[cfg(unix)]
@@ -1736,6 +1756,9 @@ fn init_session(
     plugin_aliases: PluginAliases,
     client_id: ClientId,
 ) -> SessionMetaData {
+    #[cfg(debug_assertions)]
+    stack_probe("init_session() entry");
+
     config.options = config.options.merge(*config_options.clone());
 
     let _ = SCROLL_BUFFER_SIZE.set(
@@ -1816,7 +1839,11 @@ fn init_session(
                 config_options.post_command_discovery_hook.clone(),
             );
 
-            move || pty_thread_main(pty, layout.clone()).fatal()
+            move || {
+                #[cfg(debug_assertions)]
+                stack_probe("pty_thread entry");
+                pty_thread_main(pty, layout.clone()).fatal()
+            }
         })
         .unwrap();
 
@@ -1841,6 +1868,8 @@ fn init_session(
             let layout = layout.clone();
             let config = config.clone();
             move || {
+                #[cfg(debug_assertions)]
+                stack_probe("screen_thread entry");
                 screen_thread_main(
                     screen_bus,
                     max_panes,
@@ -1885,6 +1914,8 @@ fn init_session(
             let background_plugins = config.background_plugins.clone();
             let session_env_vars = session_env_vars.clone();
             move || {
+                #[cfg(debug_assertions)]
+                stack_probe("plugin_thread (wasm) entry");
                 plugin_thread_main(
                     plugin_bus,
                     engine,
@@ -1923,7 +1954,11 @@ fn init_session(
                 Some(&to_background_jobs),
                 Some(os_input.clone()),
             );
-            || pty_writer_main(pty_writer_bus).fatal()
+            || {
+                #[cfg(debug_assertions)]
+                stack_probe("pty_writer_thread entry");
+                pty_writer_main(pty_writer_bus).fatal()
+            }
         })
         .unwrap();
 
@@ -1947,6 +1982,8 @@ fn init_session(
                 enforce_https_for_localhost,
             );
             move || {
+                #[cfg(debug_assertions)]
+                stack_probe("background_jobs_thread entry");
                 background_jobs_main(
                     background_jobs_bus,
                     serialization_interval,

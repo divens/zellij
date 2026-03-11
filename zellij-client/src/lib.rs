@@ -46,6 +46,23 @@ use crate::web_client::control_message::{
 static ASYNC_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 use std::sync::OnceLock;
 
+/// Print the remaining stack space at the current call site.
+/// Only compiled in debug builds.
+#[cfg(debug_assertions)]
+fn stack_probe(label: &str) {
+    match stacker::remaining_stack() {
+        Some(remaining) => {
+            eprintln!(
+                "[stack-probe] {label}: {remaining} bytes remaining ({} KB)",
+                remaining / 1024
+            );
+        },
+        None => {
+            eprintln!("[stack-probe] {label}: remaining_stack() unavailable");
+        },
+    }
+}
+
 /// Spawn an async runtime for this client instance.
 ///
 /// The number of workers can be configured to any nonzero value. Passing zero or `None` will spawn
@@ -651,6 +668,9 @@ pub fn start_client(
     is_a_reconnect: bool,
     start_detached_and_exit: bool,
 ) -> Option<ConnectToSession> {
+    #[cfg(debug_assertions)]
+    stack_probe("zellij_client::start_client() entry");
+
     if start_detached_and_exit {
         start_server_detached(os_input, cli_args, config, config_options, info);
         return None;
@@ -910,6 +930,8 @@ pub fn start_client(
             let send_input_instructions = send_input_instructions.clone();
             let stdin_ansi_parser = stdin_ansi_parser.clone();
             move || {
+                #[cfg(debug_assertions)]
+                stack_probe("stdin_handler thread entry");
                 stdin_loop(
                     os_input,
                     send_input_instructions,
@@ -928,6 +950,8 @@ pub fn start_client(
             let os_input = os_input.clone();
             let default_mode = config_options.default_mode.unwrap_or_default();
             move || {
+                #[cfg(debug_assertions)]
+                stack_probe("input_handler thread entry");
                 input_loop(
                     os_input,
                     config,

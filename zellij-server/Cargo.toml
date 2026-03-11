@@ -45,6 +45,7 @@ wasmi_wasi = { version = "0.51.3" }
 zellij-utils = { workspace = true }
 once_cell = "1.19"
 num_cpus = { workspace = true }
+stacker = { workspace = true }
 
 [dependencies.wasmi]
 version = "0.51.3"
