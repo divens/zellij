@@ -1222,6 +1222,9 @@ impl Pane for TerminalPane {
     fn is_alternate_mode_active(&self) -> bool {
         self.grid.is_alternate_mode_active()
     }
+    fn grid_diagnostics(&self) -> Option<zellij_utils::diagnostics::GridDiagnostics> {
+        Some(self.grid.diagnostics())
+    }
     fn hold(&mut self, exit_status: Option<i32>, is_first_run: bool, run_command: RunCommand) {
         self.invoked_with = Some(Run::Command(run_command.clone()));
         self.is_held = Some((exit_status, is_first_run, run_command));

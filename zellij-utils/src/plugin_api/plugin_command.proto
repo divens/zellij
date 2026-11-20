@@ -12,6 +12,7 @@ import "key.proto";
 import "pane_frame_style.proto";
 import "style.proto";
 import "prompt.proto";
+import "diagnostics.proto";
 
 package api.plugin_command;
 
@@ -273,6 +274,7 @@ enum CommandName {
   ShowBars = 283;
   RegisterSettingsEntry = 284;
   UnregisterSettingsEntry = 285;
+  RequestDiagnostics = 286;
 }
 
 message PluginCommand {
@@ -484,6 +486,7 @@ message PluginCommand {
     BarNamesPayload toggle_bars_payload = 224;
     BarNamesPayload hide_bars_payload = 225;
     string register_settings_entry_payload = 226;
+    api.diagnostics.DiagnosticsRequest request_diagnostics_payload = 227;
   }
 }
 

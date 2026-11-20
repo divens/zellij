@@ -20,12 +20,14 @@ use std::{
 };
 use wasmi::Engine;
 
+use crate::diagnostics::DiagnosticsReplyTo;
 use crate::panes::PaneId;
 use crate::route::NotificationEnd;
 use crate::screen::ScreenInstruction;
 use crate::session_layout_metadata::SessionLayoutMetadata;
 use crate::{pty::PtyInstruction, thread_bus::Bus, ClientId, ServerInstruction, SharedKeybinds};
 use zellij_utils::data::PaneRenderReport;
+use zellij_utils::diagnostics::DiagnosticsReport;
 use zellij_utils::input::layout::TabLayoutInfo;
 
 pub use prompt_requests::{PopupRequest, PromptCaller, SERVER_NOTICE_CALLER_ID};
@@ -236,6 +238,7 @@ pub enum PluginInstruction {
     ConfigFileChangedSinceRead(ClientId),
     WatchFilesystem,
     ListClientsToPlugin(SessionLayoutMetadata, PluginId, ClientId),
+    DeliverDiagnostics(DiagnosticsReport, DiagnosticsReplyTo),
     ChangePluginHostDir(PathBuf, PluginId, ClientId),
     WebServerStarted(String), // String -> the base url of the web server
     FailedToStartWebServer(String),
@@ -350,6 +353,7 @@ impl From<&PluginInstruction> for PluginContext {
                 PluginContext::ConfigFileChangedSinceRead
             },
             PluginInstruction::ListClientsToPlugin(..) => PluginContext::ListClientsToPlugin,
+            PluginInstruction::DeliverDiagnostics(..) => PluginContext::DeliverDiagnostics,
             PluginInstruction::ChangePluginHostDir(..) => PluginContext::ChangePluginHostDir,
             PluginInstruction::WebServerStarted(..) => PluginContext::WebServerStarted,
             PluginInstruction::FailedToStartWebServer(..) => PluginContext::FailedToStartWebServer,
@@ -1116,6 +1120,16 @@ pub(crate) fn plugin_thread_main(
                     Event::ListClients(client_list_for_plugin),
                 )];
                 wasm_bridge.update_plugins(updates, shutdown_send.clone())?;
+            },
+            PluginInstruction::DeliverDiagnostics(report, reply_to) => match reply_to {
+                DiagnosticsReplyTo::Plugin {
+                    plugin_id,
+                    client_id,
+                } => {
+                    let updates =
+                        vec![(Some(plugin_id), Some(client_id), Event::Diagnostics(report))];
+                    wasm_bridge.update_plugins(updates, shutdown_send.clone())?;
+                },
             },
             PluginInstruction::LogLayoutToHd(mut session_layout_metadata) => {
                 populate_session_layout_metadata(

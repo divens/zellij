@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package api.diagnostics;
+
+enum DiagnosticsSection {
+  Panes = 0;
+}
+
+message DiagnosticsRequest {
+  // Empty means every section.
+  repeated DiagnosticsSection sections = 1;
+}
+
+message DiagnosticsReport {
+  repeated DiagnosticsSection sections = 1;
+  repeated PaneDiagnostics panes = 2;
+  // Requested sections the server doesn't know, by wire number.
+  repeated DiagnosticsSection unsupported_sections = 3;
+}
+
+// Kept local so this file needs no imports (event.proto imports it).
+message DiagnosticsPaneId {
+  uint32 id = 1;
+  bool is_plugin = 2;
+}
+
+message PaneDiagnostics {
+  DiagnosticsPaneId pane_id = 1;
+  uint32 tab_position = 2;
+  GridDiagnostics grid = 3;
+}
+
+message GridDiagnostics {
+  uint32 viewport_rows = 1;
+  uint32 viewport_cols = 2;
+  uint64 scrollback_lines = 3;
+  uint64 scrollback_limit = 4;
+  bool in_alternate_screen = 5;
+}

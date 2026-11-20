@@ -1,0 +1,157 @@
+//! Session diagnostics: the report behind `request_diagnostics` in the plugin
+//! API.
+//!
+//! Counters cover the lifetime of whatever they describe and are never reset
+//! when read, so several consumers can poll independently and compute rates
+//! from the difference between two reports.
+
+use crate::data::PaneId;
+use serde::{Deserialize, Serialize};
+
+/// A part of the diagnostics report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DiagnosticsSection {
+    /// Per-pane grid and scrollback state.
+    Panes,
+    /// A section this build doesn't know, by its wire number. It appears when
+    /// a newer peer names a section, so a report can say which sections it
+    /// could not fill in. Never request it.
+    Unknown(i32),
+}
+
+impl DiagnosticsSection {
+    /// Every section this build knows, in report order.
+    pub const ALL: [DiagnosticsSection; 1] = [DiagnosticsSection::Panes];
+
+    pub fn is_known(self) -> bool {
+        !matches!(self, DiagnosticsSection::Unknown(_))
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiagnosticsRequest {
+    /// The sections to fill in. Empty means all of them.
+    pub sections: Vec<DiagnosticsSection>,
+}
+
+impl DiagnosticsRequest {
+    pub fn new(sections: &[DiagnosticsSection]) -> Self {
+        DiagnosticsRequest {
+            sections: sections.to_vec(),
+        }
+    }
+
+    pub fn includes(&self, section: DiagnosticsSection) -> bool {
+        if self.sections.is_empty() {
+            section.is_known()
+        } else {
+            self.sections.contains(&section)
+        }
+    }
+
+    /// The sections this request covers, in report order and without
+    /// duplicates.
+    pub fn resolved_sections(&self) -> Vec<DiagnosticsSection> {
+        DiagnosticsSection::ALL
+            .iter()
+            .copied()
+            .filter(|section| self.includes(*section))
+            .collect()
+    }
+
+    /// The requested sections this build doesn't know, without duplicates.
+    pub fn unsupported_sections(&self) -> Vec<DiagnosticsSection> {
+        let mut unsupported: Vec<DiagnosticsSection> = self
+            .sections
+            .iter()
+            .copied()
+            .filter(|section| !section.is_known())
+            .collect();
+        unsupported.sort();
+        unsupported.dedup();
+        unsupported
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiagnosticsReport {
+    /// The sections that were filled in. The fields of other sections are
+    /// left empty.
+    pub sections: Vec<DiagnosticsSection>,
+    /// Requested sections the server doesn't know, so it couldn't fill them
+    /// in. When every requested section is unsupported, `sections` is empty
+    /// and this lists them all: the server is older than the request.
+    pub unsupported_sections: Vec<DiagnosticsSection>,
+    pub panes: Vec<PaneDiagnostics>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneDiagnostics {
+    pub pane_id: PaneId,
+    /// The position of the pane's tab, as in `PaneManifest`.
+    pub tab_position: usize,
+    /// `None` for panes without a terminal grid, such as plugin panes.
+    pub grid: Option<GridDiagnostics>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GridDiagnostics {
+    pub viewport_rows: u32,
+    pub viewport_cols: u32,
+    /// Lines of history kept outside the viewport. While the alternate screen
+    /// is active, this includes the primary screen's history it keeps aside.
+    pub scrollback_lines: u64,
+    /// The `scroll_buffer_size` at which the oldest lines are dropped.
+    pub scrollback_limit: u64,
+    pub in_alternate_screen: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_request_covers_every_section() {
+        let request = DiagnosticsRequest::default();
+        assert!(request.includes(DiagnosticsSection::Panes));
+        assert_eq!(
+            request.resolved_sections(),
+            DiagnosticsSection::ALL.to_vec()
+        );
+    }
+
+    #[test]
+    fn resolved_sections_are_ordered_and_deduplicated() {
+        let request =
+            DiagnosticsRequest::new(&[DiagnosticsSection::Panes, DiagnosticsSection::Panes]);
+        assert_eq!(request.resolved_sections(), vec![DiagnosticsSection::Panes]);
+    }
+
+    #[test]
+    fn unknown_sections_are_not_served_but_are_reported() {
+        let request = DiagnosticsRequest::new(&[
+            DiagnosticsSection::Unknown(9),
+            DiagnosticsSection::Panes,
+            DiagnosticsSection::Unknown(9),
+        ]);
+        assert_eq!(request.resolved_sections(), vec![DiagnosticsSection::Panes]);
+        assert_eq!(
+            request.unsupported_sections(),
+            vec![DiagnosticsSection::Unknown(9)]
+        );
+    }
+
+    #[test]
+    fn a_request_for_only_unknown_sections_resolves_to_nothing() {
+        let request = DiagnosticsRequest::new(&[DiagnosticsSection::Unknown(9)]);
+        assert!(request.resolved_sections().is_empty());
+        assert!(!request.includes(DiagnosticsSection::Panes));
+    }
+
+    #[test]
+    fn an_empty_request_never_includes_unknown_sections() {
+        let request = DiagnosticsRequest::default();
+        assert!(!request.includes(DiagnosticsSection::Unknown(9)));
+        assert!(request.unsupported_sections().is_empty());
+    }
+}

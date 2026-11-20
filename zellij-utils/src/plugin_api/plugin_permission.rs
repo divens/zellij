@@ -34,6 +34,7 @@ impl TryFrom<ProtobufPermissionType> for PermissionType {
             ProtobufPermissionType::ReadSessionEnvironmentVariables => {
                 Ok(PermissionType::ReadSessionEnvironmentVariables)
             },
+            ProtobufPermissionType::ReadDiagnostics => Ok(PermissionType::ReadDiagnostics),
         }
     }
 }
@@ -69,6 +70,7 @@ impl TryFrom<PermissionType> for ProtobufPermissionType {
             PermissionType::ReadSessionEnvironmentVariables => {
                 Ok(ProtobufPermissionType::ReadSessionEnvironmentVariables)
             },
+            PermissionType::ReadDiagnostics => Ok(ProtobufPermissionType::ReadDiagnostics),
         }
     }
 }

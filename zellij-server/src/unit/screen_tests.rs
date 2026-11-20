@@ -21191,3 +21191,90 @@ fn pasting_into_a_held_pane_reports_its_closing() {
     let names = event_names(&run.events);
     assert!(names.contains(&"pane_closed".to_owned()), "{:?}", names);
 }
+
+/// Sends `request` to a screen with two panes in its first tab and one in
+/// its second, and returns what the screen forwarded to the plugin thread.
+fn diagnostics_forwarded_for(
+    request: zellij_utils::diagnostics::DiagnosticsRequest,
+) -> (
+    zellij_utils::diagnostics::DiagnosticsReport,
+    crate::diagnostics::DiagnosticsReplyTo,
+) {
+    use crate::diagnostics::DiagnosticsReplyTo;
+    let size = Size { cols: 80, rows: 10 };
+    let mut initial_layout = TiledPaneLayout::default();
+    initial_layout.children_split_direction = SplitDirection::Vertical;
+    initial_layout.children = vec![TiledPaneLayout::default(), TiledPaneLayout::default()];
+    let mut mock_screen = MockScreen::new(size);
+    mock_screen.new_tab(TiledPaneLayout::default());
+    let screen_thread = mock_screen.run(Some(initial_layout), vec![]);
+    let received_plugin_instructions = Arc::new(Mutex::new(vec![]));
+    let plugin_receiver = mock_screen.plugin_receiver.take().unwrap();
+    let plugin_thread = log_actions_in_thread!(
+        received_plugin_instructions,
+        PluginInstruction::Exit,
+        plugin_receiver
+    );
+    let reply_to = DiagnosticsReplyTo::Plugin {
+        plugin_id: 7,
+        client_id: 1,
+    };
+    let _ = mock_screen
+        .to_screen
+        .send(ScreenInstruction::RequestDiagnostics(request, reply_to));
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    mock_screen.teardown(vec![plugin_thread, screen_thread]);
+    let delivered = received_plugin_instructions
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|instruction| match instruction {
+            PluginInstruction::DeliverDiagnostics(report, to) => Some((report.clone(), *to)),
+            _ => None,
+        });
+    let (report, to) = delivered.expect("the screen forwarded a diagnostics report");
+    assert_eq!(to, reply_to);
+    (report, to)
+}
+
+#[test]
+pub fn a_request_for_only_unknown_diagnostics_sections_is_answered_with_what_was_unsupported() {
+    use zellij_utils::diagnostics::{DiagnosticsRequest, DiagnosticsSection};
+    let (report, _) =
+        diagnostics_forwarded_for(DiagnosticsRequest::new(&[DiagnosticsSection::Unknown(99)]));
+    assert!(report.sections.is_empty(), "{report:?}");
+    assert!(report.panes.is_empty(), "{report:?}");
+    assert_eq!(
+        report.unsupported_sections,
+        vec![DiagnosticsSection::Unknown(99)]
+    );
+}
+
+#[test]
+pub fn a_diagnostics_request_reaches_the_plugin_thread_with_every_pane() {
+    use zellij_utils::diagnostics::{DiagnosticsRequest, DiagnosticsSection};
+    let (report, _) = diagnostics_forwarded_for(DiagnosticsRequest::new(&[
+        DiagnosticsSection::Panes,
+        DiagnosticsSection::Unknown(99),
+    ]));
+    assert_eq!(report.sections, vec![DiagnosticsSection::Panes]);
+    assert_eq!(
+        report.unsupported_sections,
+        vec![DiagnosticsSection::Unknown(99)]
+    );
+    let panes: Vec<_> = report
+        .panes
+        .iter()
+        .map(|pane| (pane.tab_position, pane.pane_id, pane.grid.is_some()))
+        .collect();
+    assert_eq!(
+        panes.len(),
+        3,
+        "two panes in the first tab, one in the second: {panes:?}"
+    );
+    assert!(
+        panes.windows(2).all(|pair| pair[0].0 <= pair[1].0),
+        "ordered by tab: {panes:?}"
+    );
+    assert!(panes.iter().all(|(_, _, has_grid)| *has_grid), "{panes:?}");
+}

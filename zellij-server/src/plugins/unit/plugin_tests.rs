@@ -9570,6 +9570,159 @@ pub fn list_clients_plugin_command() {
     assert_snapshot!(format!("{:#?}", list_clients_instruction));
 }
 
+fn load_diagnostics_fixture(
+    plugin_thread_sender: &SenderWithContext<PluginInstruction>,
+    client_id: zellij_utils::data::ClientId,
+) {
+    let mut configuration = BTreeMap::new();
+    configuration.insert("diagnostics_fixture".to_owned(), "true".to_owned());
+    let run_plugin = RunPluginOrAlias::RunPlugin(RunPlugin {
+        _allow_exec_host_cmd: false,
+        location: RunPluginLocation::File(PathBuf::from(&*PLUGIN_FIXTURE)),
+        configuration: PluginUserConfiguration::new(configuration),
+        ..Default::default()
+    });
+    let _ = plugin_thread_sender.send(PluginInstruction::AddClient(client_id));
+    let _ = plugin_thread_sender.send(PluginInstruction::Load(
+        Some(false),
+        false,
+        false, // close_replaced_pane
+        Some("test_plugin".to_owned()),
+        run_plugin,
+        Some(1),
+        None,
+        client_id,
+        Size {
+            cols: 500,
+            rows: 20,
+        },
+        None,
+        None,
+        false,
+        None,
+        None,
+        None,
+    ));
+}
+
+#[test]
+#[ignore]
+pub fn request_diagnostics_plugin_command() {
+    let temp_folder = tempdir().unwrap(); // placed explicitly in the test scope because its
+                                          // destructor removes the directory
+    let plugin_host_folder = PathBuf::from(temp_folder.path());
+    let cache_path = plugin_host_folder.join("permissions_test.kdl");
+    let (plugin_thread_sender, screen_receiver, teardown) =
+        create_plugin_thread(Some(plugin_host_folder), None);
+    let client_id = 1;
+    let received_screen_instructions = Arc::new(Mutex::new(vec![]));
+    let screen_thread = grant_permissions_and_log_actions_until!(
+        received_screen_instructions,
+        screen_receiver,
+        &PermissionType::ReadDiagnostics,
+        cache_path,
+        plugin_thread_sender,
+        client_id,
+        |event: &ScreenInstruction| matches!(event, ScreenInstruction::RequestDiagnostics(..))
+    );
+    load_diagnostics_fixture(&plugin_thread_sender, client_id);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let _ = plugin_thread_sender.send(PluginInstruction::Update(vec![(
+        None,
+        Some(client_id),
+        Event::Key(KeyWithModifier::new(BareKey::Char('u')).with_super_modifier()), // the fixture calls request_diagnostics
+    )]));
+    screen_thread.join().unwrap(); // this might take a while if the cache is cold
+    teardown();
+    let received = received_screen_instructions.lock().unwrap().clone();
+    let request_diagnostics_instruction = received
+        .iter()
+        .find(|i| matches!(i, ScreenInstruction::RequestDiagnostics(..)))
+        .unwrap_or_else(|| {
+            let kinds: Vec<String> = received
+                .iter()
+                .map(|i| format!("{:?}", zellij_utils::errors::ScreenContext::from(i)))
+                .collect();
+            panic!("the fixture never requested diagnostics; received {kinds:?}")
+        });
+    assert_snapshot!(format!("{:#?}", request_diagnostics_instruction));
+}
+
+#[test]
+#[ignore]
+pub fn diagnostics_are_delivered_to_the_requesting_plugin() {
+    use crate::diagnostics::DiagnosticsReplyTo;
+    use zellij_utils::diagnostics::{
+        DiagnosticsReport, DiagnosticsSection, GridDiagnostics, PaneDiagnostics,
+    };
+    let temp_folder = tempdir().unwrap(); // placed explicitly in the test scope because its
+                                          // destructor removes the directory
+    let plugin_host_folder = PathBuf::from(temp_folder.path());
+    let cache_path = plugin_host_folder.join("permissions_test.kdl");
+    let (plugin_thread_sender, screen_receiver, teardown) =
+        create_plugin_thread(Some(plugin_host_folder), None);
+    let client_id = 1;
+    let received_screen_instructions = Arc::new(Mutex::new(vec![]));
+    let screen_thread = grant_permissions_and_log_actions_until!(
+        received_screen_instructions,
+        screen_receiver,
+        &PermissionType::ReadDiagnostics,
+        cache_path,
+        plugin_thread_sender,
+        client_id,
+        |event: &ScreenInstruction| match event {
+            ScreenInstruction::PluginBytes(plugin_render_assets) => {
+                plugin_render_assets.iter().any(|plugin_render_asset| {
+                    String::from_utf8_lossy(&plugin_render_asset.bytes)
+                        .contains("scrollback_lines: 4321")
+                })
+            },
+            _ => false,
+        }
+    );
+    load_diagnostics_fixture(&plugin_thread_sender, client_id);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let report = DiagnosticsReport {
+        sections: vec![DiagnosticsSection::Panes],
+        unsupported_sections: vec![],
+        panes: vec![PaneDiagnostics {
+            pane_id: zellij_utils::data::PaneId::Terminal(1),
+            tab_position: 0,
+            grid: Some(GridDiagnostics {
+                viewport_rows: 20,
+                viewport_cols: 80,
+                scrollback_lines: 4321,
+                scrollback_limit: 10_000,
+                in_alternate_screen: false,
+            }),
+        }],
+    };
+    let _ = plugin_thread_sender.send(PluginInstruction::DeliverDiagnostics(
+        report,
+        DiagnosticsReplyTo::Plugin {
+            plugin_id: 0,
+            client_id,
+        },
+    ));
+    screen_thread.join().unwrap(); // this might take a while if the cache is cold
+    teardown();
+    let rendered_the_report =
+        received_screen_instructions
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|i| match i {
+                ScreenInstruction::PluginBytes(plugin_render_assets) => {
+                    plugin_render_assets.iter().any(|plugin_render_asset| {
+                        String::from_utf8_lossy(&plugin_render_asset.bytes)
+                            .contains("scrollback_lines: 4321")
+                    })
+                },
+                _ => false,
+            });
+    assert!(rendered_the_report, "the fixture never received the report");
+}
+
 #[test]
 #[ignore]
 pub fn before_close_plugin_event() {
@@ -14051,6 +14204,42 @@ pub fn session_pane_commands_need_their_permission() {
             required
         );
     }
+}
+
+#[test]
+pub fn requesting_diagnostics_needs_read_diagnostics() {
+    let command = zellij_utils::data::PluginCommand::RequestDiagnostics(Default::default());
+    let granted = plugin_env_with_permissions(&[PermissionType::ReadDiagnostics]);
+    assert_eq!(
+        super::zellij_exports::check_command_permission(&granted, &command).0,
+        PermissionStatus::Granted
+    );
+    let denied = plugin_env_with_permissions(&EVERY_PERMISSION);
+    assert_eq!(
+        super::zellij_exports::check_command_permission(&denied, &command),
+        (
+            PermissionStatus::Denied,
+            Some(PermissionType::ReadDiagnostics)
+        )
+    );
+}
+
+#[test]
+pub fn diagnostics_events_need_read_diagnostics() {
+    let event = Event::Diagnostics(Default::default());
+    let granted = plugin_env_with_permissions(&[PermissionType::ReadDiagnostics]);
+    assert_eq!(
+        super::wasm_bridge::check_event_permission(&granted, &event).0,
+        PermissionStatus::Granted
+    );
+    let denied = plugin_env_with_permissions(&EVERY_PERMISSION);
+    assert_eq!(
+        super::wasm_bridge::check_event_permission(&denied, &event),
+        (
+            PermissionStatus::Denied,
+            Some(PermissionType::ReadDiagnostics)
+        )
+    );
 }
 
 fn attention_with_command_text() -> zellij_utils::attention::PaneAttention {

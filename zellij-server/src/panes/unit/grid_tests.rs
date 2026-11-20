@@ -11577,3 +11577,49 @@ fn oversized_xtgettcap_request_is_dropped() {
     vte_parser.feed(&mut grid, &sequence);
     assert!(grid.pending_messages_to_pty.is_empty());
 }
+
+#[test]
+pub fn diagnostics_count_history_kept_aside_by_the_alternate_screen() {
+    let mut vte_parser = vt_parser::Parser::new();
+    let debug = false;
+    let arrow_fonts = true;
+    let styled_underlines = true;
+    let osc8_hyperlinks = true;
+    let explicitly_disable_kitty_keyboard_protocol = false;
+    let mut grid = Grid::new(
+        5,
+        20,
+        Rc::new(RefCell::new(Palette::default())),
+        Rc::new(RefCell::new(HashMap::new())),
+        Rc::new(RefCell::new(LinkHandler::new())),
+        Rc::new(RefCell::new(None)),
+        Rc::new(RefCell::new(SixelImageStore::default())),
+        Rc::new(RefCell::new(KittyImageStore::default())),
+        Style::default(),
+        debug,
+        arrow_fonts,
+        styled_underlines,
+        osc8_hyperlinks,
+        explicitly_disable_kitty_keyboard_protocol,
+    );
+    // 12 lines plus the cursor's empty line, in a 5-row viewport.
+    for line in 1..=12 {
+        vte_parser.feed(&mut grid, format!("line {line}\r\n").as_bytes());
+    }
+    let primary = grid.diagnostics();
+    assert_eq!((primary.viewport_rows, primary.viewport_cols), (5, 20));
+    assert_eq!(primary.scrollback_lines, 8);
+    assert_eq!(primary.scrollback_limit, 10_000);
+    assert!(!primary.in_alternate_screen);
+
+    vte_parser.feed(&mut grid, b"\x1b[?1049h");
+    let alternate = grid.diagnostics();
+    assert!(alternate.in_alternate_screen);
+    assert_eq!(
+        alternate.scrollback_lines, 8,
+        "history held aside still counts"
+    );
+
+    vte_parser.feed(&mut grid, b"\x1b[?1049l");
+    assert_eq!(grid.diagnostics(), primary);
+}

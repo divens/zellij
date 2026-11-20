@@ -3552,6 +3552,7 @@ pub fn check_event_permission(
         Event::PaneRenderReport(..) => PermissionType::ReadPaneContents,
         Event::LiveViewStateChanged { .. } => PermissionType::ReadPaneContents,
         Event::UserAction(..) => PermissionType::InterceptInput,
+        Event::Diagnostics(..) => PermissionType::ReadDiagnostics,
         _ => return (PermissionStatus::Granted, None),
     };
 

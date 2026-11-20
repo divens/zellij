@@ -1160,6 +1160,22 @@ pub fn unregister_settings_entry() {
     run_plugin_command(PluginCommand::UnregisterSettingsEntry);
 }
 
+/// Ask for a diagnostics report about this session. It arrives as an
+/// [`Event::Diagnostics`] sent only to this plugin, which must be subscribed
+/// to [`EventType::Diagnostics`]. Pass no sections to get all of them.
+///
+/// Sections the server doesn't know come back in the report's
+/// `unsupported_sections` instead of being filled in. Servers that predate
+/// this command don't answer at all, so gate it on [`get_zellij_version`].
+///
+/// # Permissions Required
+/// * `ReadDiagnostics`
+pub fn request_diagnostics(sections: &[zellij_utils::diagnostics::DiagnosticsSection]) {
+    run_plugin_command(PluginCommand::RequestDiagnostics(
+        zellij_utils::diagnostics::DiagnosticsRequest::new(sections),
+    ));
+}
+
 pub fn hide_self() {
     let plugin_command = PluginCommand::HideSelf;
     let protobuf_plugin_command: ProtobufPluginCommand = plugin_command.try_into().unwrap();

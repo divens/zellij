@@ -15,6 +15,7 @@ use std::rc::Rc;
 use zellij_utils::data::{
     HighlightLayer, HighlightStyle, HostTerminalThemeMode, RegexHighlight, Style,
 };
+use zellij_utils::diagnostics::GridDiagnostics;
 use zellij_utils::errors::prelude::*;
 
 use std::{
@@ -4941,6 +4942,26 @@ impl Grid {
     }
     pub fn is_alternate_mode_active(&self) -> bool {
         self.alternate_screen_state.is_some()
+    }
+    pub fn diagnostics(&self) -> GridDiagnostics {
+        // The alternate screen keeps the primary screen's history aside and
+        // has none of its own.
+        let history_held_aside = self
+            .alternate_screen_state
+            .as_ref()
+            .map_or(0, |state| state.lines_above.len());
+        let scrollback_lines = self.lines_above.len() + self.lines_below.len() + history_held_aside;
+        let scrollback_limit = SCROLL_BUFFER_SIZE
+            .get()
+            .copied()
+            .unwrap_or(DEFAULT_SCROLL_BUFFER_SIZE);
+        GridDiagnostics {
+            viewport_rows: self.height as u32,
+            viewport_cols: self.width as u32,
+            scrollback_lines: scrollback_lines as u64,
+            scrollback_limit: scrollback_limit as u64,
+            in_alternate_screen: self.is_alternate_mode_active(),
+        }
     }
     pub fn focus_event(&self) -> Option<String> {
         if self.focus_event_tracking {

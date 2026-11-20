@@ -6,6 +6,9 @@ pub mod api {
     pub mod command {
         include!("api.command.rs");
     }
+    pub mod diagnostics {
+        include!("api.diagnostics.rs");
+    }
     pub mod event {
         include!("api.event.rs");
     }

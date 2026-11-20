@@ -1377,6 +1377,8 @@ pub enum Event {
         source_size: Option<crate::pane_size::Size>,
         release_key: String,
     },
+    /// The answer to `request_diagnostics`, sent only to the plugin that asked.
+    Diagnostics(crate::diagnostics::DiagnosticsReport),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1881,6 +1883,7 @@ pub enum Permission {
     RunActionsAsUser,
     WriteToClipboard,
     ReadSessionEnvironmentVariables,
+    ReadDiagnostics,
 }
 
 impl PermissionType {
@@ -1914,6 +1917,10 @@ impl PermissionType {
             PermissionType::WriteToClipboard => "Write to clipboard".to_owned(),
             PermissionType::ReadSessionEnvironmentVariables => {
                 "Read environment variables present upon session creation".to_owned()
+            },
+            PermissionType::ReadDiagnostics => {
+                "Read diagnostics about this session: performance, memory, other plugins' activity"
+                    .to_owned()
             },
         }
     }
@@ -5459,6 +5466,7 @@ pub enum PluginCommand {
     ShowBars,
     RegisterSettingsEntry(String),
     UnregisterSettingsEntry,
+    RequestDiagnostics(crate::diagnostics::DiagnosticsRequest),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

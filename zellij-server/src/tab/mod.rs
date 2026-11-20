@@ -997,6 +997,11 @@ pub trait Pane {
         // False by default (only terminal-panes support alternate mode)
         false
     }
+    /// Grid and scrollback state for diagnostics. `None` for panes without
+    /// a terminal grid of their own.
+    fn grid_diagnostics(&self) -> Option<zellij_utils::diagnostics::GridDiagnostics> {
+        None
+    }
     fn hold(&mut self, _exit_status: Option<i32>, _is_first_run: bool, _run_command: RunCommand) {
         // No-op by default, only terminal panes support holding
     }

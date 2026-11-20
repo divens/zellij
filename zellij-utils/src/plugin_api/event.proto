@@ -5,6 +5,7 @@ import "key.proto";
 import "style.proto";
 import "action.proto";
 import "prompt.proto";
+import "diagnostics.proto";
 
 package api.event;
 
@@ -95,6 +96,7 @@ enum EventType {
     DesktopIntegration = 69;
     LiveViewStateChanged = 71;
     PluginSettingsEntries = 72;
+    Diagnostics = 73;
 }
 
 message EventNameList {
@@ -166,6 +168,7 @@ message Event {
     string desktop_integration_payload = 61;
     LiveViewStateChangedPayload live_view_state_changed_payload = 63;
     PluginSettingsEntriesPayload plugin_settings_entries_payload = 64;
+    api.diagnostics.DiagnosticsReport diagnostics_payload = 65;
   }
 }
 

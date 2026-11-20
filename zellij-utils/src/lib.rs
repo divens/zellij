@@ -4,6 +4,7 @@ pub mod client_server_contract;
 pub mod consts;
 pub mod data;
 pub mod desktop_integration;
+pub mod diagnostics;
 pub mod distribution;
 pub mod envs;
 pub mod errors;

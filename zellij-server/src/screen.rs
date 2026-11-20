@@ -37,8 +37,10 @@ use std::str;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::diagnostics::{self, DiagnosticsReplyTo};
 use crate::route::NotificationEnd;
 use crate::SharedKeybinds;
+use zellij_utils::diagnostics::{DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection};
 
 mod attention;
 mod event_subscribers;
@@ -955,6 +957,7 @@ pub enum ScreenInstruction {
         completion_tx: Option<NotificationEnd>,
     },
     ListClientsToPlugin(PluginId, ClientId),
+    RequestDiagnostics(DiagnosticsRequest, DiagnosticsReplyTo),
     TogglePanePinned(ClientId, Option<NotificationEnd>),
     SetFloatingPanePinned(PaneId, bool),
     StackPanes(Vec<PaneId>, ClientId, Option<NotificationEnd>),
@@ -1567,6 +1570,7 @@ impl From<&ScreenInstruction> for ScreenContext {
                 ScreenContext::BreakPanesToTabWithIndex
             },
             ScreenInstruction::ListClientsToPlugin(..) => ScreenContext::ListClientsToPlugin,
+            ScreenInstruction::RequestDiagnostics(..) => ScreenContext::RequestDiagnostics,
             ScreenInstruction::TogglePanePinned(..) => ScreenContext::TogglePanePinned,
             ScreenInstruction::SetFloatingPanePinned(..) => ScreenContext::SetFloatingPanePinned,
             ScreenInstruction::StackPanes(..) => ScreenContext::StackPanes,
@@ -12170,6 +12174,22 @@ pub(crate) fn screen_thread_main(
                         client_id,
                     ))
                     .with_context(err_context)
+                    .non_fatal();
+            },
+            ScreenInstruction::RequestDiagnostics(request, reply_to) => {
+                let mut report = DiagnosticsReport {
+                    sections: request.resolved_sections(),
+                    unsupported_sections: request.unsupported_sections(),
+                    ..Default::default()
+                };
+                if request.includes(DiagnosticsSection::Panes) {
+                    report.panes = diagnostics::collect_panes(screen.get_tabs().values());
+                }
+                screen
+                    .bus
+                    .senders
+                    .send_to_plugin(PluginInstruction::DeliverDiagnostics(report, reply_to))
+                    .with_context(|| "failed to forward a diagnostics report")
                     .non_fatal();
             },
             ScreenInstruction::EditScrollback(client_id, ansi, completion_tx) => {

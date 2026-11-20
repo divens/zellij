@@ -2958,6 +2958,12 @@ impl TryFrom<ProtobufPluginCommand> for PluginCommand {
                 }
                 Ok(PluginCommand::UnregisterSettingsEntry)
             },
+            Some(CommandName::RequestDiagnostics) => match protobuf_plugin_command.payload {
+                Some(Payload::RequestDiagnosticsPayload(request)) => {
+                    Ok(PluginCommand::RequestDiagnostics(request.into()))
+                },
+                _ => Err("Mismatched payload for RequestDiagnostics"),
+            },
             Some(CommandName::DeleteThemeFile) => match protobuf_plugin_command.payload {
                 Some(Payload::DeleteThemeFilePayload(name)) => {
                     Ok(PluginCommand::DeleteThemeFile { name })
@@ -5195,6 +5201,10 @@ impl TryFrom<PluginCommand> for ProtobufPluginCommand {
                 name: CommandName::UnregisterSettingsEntry as i32,
                 payload: None,
             }),
+            PluginCommand::RequestDiagnostics(request) => Ok(ProtobufPluginCommand {
+                name: CommandName::RequestDiagnostics as i32,
+                payload: Some(Payload::RequestDiagnosticsPayload(request.into())),
+            }),
             PluginCommand::DesktopIntegration(request) => Ok(ProtobufPluginCommand {
                 name: CommandName::DesktopIntegration as i32,
                 payload: Some(Payload::DesktopIntegrationPayload(request)),
@@ -6658,6 +6668,10 @@ mod tests {
         for original in [
             PluginCommand::RegisterSettingsEntry("Status bar".to_owned()),
             PluginCommand::UnregisterSettingsEntry,
+            PluginCommand::RequestDiagnostics(crate::diagnostics::DiagnosticsRequest::default()),
+            PluginCommand::RequestDiagnostics(crate::diagnostics::DiagnosticsRequest::new(&[
+                crate::diagnostics::DiagnosticsSection::Panes,
+            ])),
         ] {
             let protobuf: ProtobufPluginCommand = original.clone().try_into().expect("encode");
             let decoded: PluginCommand = protobuf.try_into().expect("decode");

@@ -1,0 +1,13 @@
+---
+source: zellij-server/src/plugins/./unit/plugin_tests.rs
+expression: "format!(\"{:#?}\", request_diagnostics_instruction)"
+---
+RequestDiagnostics(
+    DiagnosticsRequest {
+        sections: [],
+    },
+    Plugin {
+        plugin_id: 0,
+        client_id: 1,
+    },
+)

@@ -356,6 +356,13 @@ impl ZellijPlugin for State {
         if attention_fixture || live_view_fixture {
             permissions.push(PermissionType::ReadPaneContents);
         }
+        let diagnostics_fixture = configuration
+            .get("diagnostics_fixture")
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if diagnostics_fixture {
+            permissions.push(PermissionType::ReadDiagnostics);
+        }
         request_permission(&permissions);
         let should_subscribe_initial_keybinds = configuration
             .get("subscribe_initial_keybinds")
@@ -420,6 +427,9 @@ impl ZellijPlugin for State {
         }
         if should_subscribe_settings_entries {
             subscribe(&[EventType::PluginSettingsEntries]);
+        }
+        if diagnostics_fixture {
+            subscribe(&[EventType::Diagnostics]);
         }
         watch_filesystem();
     }
@@ -981,6 +991,9 @@ impl ZellijPlugin for State {
                         "Pane info: {:?}",
                         get_pane_info(self.target_pane())
                     ));
+                },
+                BareKey::Char('u') if key.has_only_modifiers(&[KeyModifier::Super]) => {
+                    request_diagnostics(&[]);
                 },
                 BareKey::Char('t') if key.has_only_modifiers(&[KeyModifier::Super]) => {
                     let session = self.target_session();

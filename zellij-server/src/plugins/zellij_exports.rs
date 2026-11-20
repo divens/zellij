@@ -1,5 +1,6 @@
 use super::PluginInstruction;
 use crate::background_jobs::BackgroundJob;
+use crate::diagnostics::DiagnosticsReplyTo;
 use crate::global_async_runtime::get_tokio_runtime;
 use crate::plugins::plugin_map::PluginEnv;
 use crate::plugins::wasm_bridge::handle_plugin_crash;
@@ -45,6 +46,7 @@ use zellij_utils::data::{
     PluginPermission, PopupOptions, RegexHighlight, RenameLayoutResponse, SaveLayoutResponse,
     SettingKey, TabMetadata,
 };
+use zellij_utils::diagnostics::DiagnosticsRequest;
 use zellij_utils::home::default_layout_dir;
 use zellij_utils::input::permission::PermissionCache;
 use zellij_utils::sessions::generate_random_name as generate_random_name_impl;
@@ -1339,6 +1341,9 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
                         write_config_to_disk,
                     } => rebind_keys(env, keys_to_rebind, keys_to_unbind, write_config_to_disk)?,
                     PluginCommand::ListClients => list_clients(env),
+                    PluginCommand::RequestDiagnostics(request) => {
+                        request_diagnostics(env, request)
+                    },
                     PluginCommand::ChangeHostFolder(new_host_folder) => {
                         change_host_folder(env, new_host_folder)
                     },
@@ -5083,6 +5088,18 @@ fn list_clients(env: &PluginEnv) {
     });
 }
 
+fn request_diagnostics(env: &PluginEnv, request: DiagnosticsRequest) {
+    let reply_to = DiagnosticsReplyTo::Plugin {
+        plugin_id: env.plugin_id,
+        client_id: acting_client(env),
+    };
+    let _ = env
+        .senders
+        .to_screen
+        .as_ref()
+        .map(|sender| sender.send(ScreenInstruction::RequestDiagnostics(request, reply_to)));
+}
+
 fn change_host_folder(env: &PluginEnv, new_host_folder: PathBuf) {
     let _ = env.senders.to_plugin.as_ref().map(|sender| {
         sender.send(PluginInstruction::ChangePluginHostDir(
@@ -6933,6 +6950,7 @@ fn required_permission(command: &PluginCommand) -> Option<PermissionType> {
         PluginCommand::GetSessionEnvironmentVariables => {
             PermissionType::ReadSessionEnvironmentVariables
         },
+        PluginCommand::RequestDiagnostics(..) => PermissionType::ReadDiagnostics,
         PluginCommand::OpenCommandPaneInNewTab(..) => PermissionType::RunCommands,
         PluginCommand::OpenEditorPaneInNewTab(..) => PermissionType::OpenFiles,
         _ => return None,

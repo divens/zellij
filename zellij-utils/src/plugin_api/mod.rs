@@ -1,6 +1,7 @@
 pub mod action;
 pub mod attention;
 pub mod command;
+pub mod diagnostics;
 pub mod event;
 pub mod file;
 pub mod input_mode;

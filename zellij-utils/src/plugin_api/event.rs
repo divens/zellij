@@ -741,6 +741,12 @@ impl TryFrom<ProtobufEvent> for Event {
                 },
                 _ => Err("Malformed payload for the PluginSettingsEntries Event"),
             },
+            Some(ProtobufEventType::Diagnostics) => match protobuf_event.payload {
+                Some(ProtobufEventPayload::DiagnosticsPayload(report)) => {
+                    Ok(Event::Diagnostics(report.try_into()?))
+                },
+                _ => Err("Malformed payload for the Diagnostics Event"),
+            },
             Some(ProtobufEventType::LiveViewStateChanged) => match protobuf_event.payload {
                 Some(ProtobufEventPayload::LiveViewStateChangedPayload(payload)) => {
                     Ok(Event::LiveViewStateChanged {
@@ -1580,6 +1586,10 @@ impl TryFrom<Event> for ProtobufEvent {
                             .collect(),
                     },
                 )),
+            }),
+            Event::Diagnostics(report) => Ok(ProtobufEvent {
+                name: ProtobufEventType::Diagnostics as i32,
+                payload: Some(event::Payload::DiagnosticsPayload(report.into())),
             }),
             Event::LiveViewStateChanged {
                 target,
@@ -2959,6 +2969,7 @@ impl TryFrom<ProtobufEventType> for EventType {
             ProtobufEventType::SessionHistoryUpdate => EventType::SessionHistoryUpdate,
             ProtobufEventType::DesktopIntegration => EventType::DesktopIntegration,
             ProtobufEventType::PluginSettingsEntries => EventType::PluginSettingsEntries,
+            ProtobufEventType::Diagnostics => EventType::Diagnostics,
             ProtobufEventType::LiveViewStateChanged => EventType::LiveViewStateChanged,
             ProtobufEventType::CommandChanged => EventType::CommandChanged,
             ProtobufEventType::AvailableLayoutInfo => EventType::AvailableLayoutInfo,
@@ -3039,6 +3050,7 @@ impl TryFrom<EventType> for ProtobufEventType {
             EventType::SessionHistoryUpdate => ProtobufEventType::SessionHistoryUpdate,
             EventType::DesktopIntegration => ProtobufEventType::DesktopIntegration,
             EventType::PluginSettingsEntries => ProtobufEventType::PluginSettingsEntries,
+            EventType::Diagnostics => ProtobufEventType::Diagnostics,
             EventType::LiveViewStateChanged => ProtobufEventType::LiveViewStateChanged,
             EventType::CommandChanged => ProtobufEventType::CommandChanged,
             EventType::AvailableLayoutInfo => ProtobufEventType::AvailableLayoutInfo,
@@ -5591,6 +5603,42 @@ mod plugin_settings_entries_tests {
         assert_eq!(
             EventType::try_from(protobuf).unwrap(),
             EventType::PluginSettingsEntries
+        );
+    }
+}
+
+#[cfg(test)]
+mod diagnostics_event_tests {
+    use super::*;
+    use crate::diagnostics::{
+        DiagnosticsReport, DiagnosticsSection, GridDiagnostics, PaneDiagnostics,
+    };
+    use prost::Message;
+
+    #[test]
+    fn diagnostics_round_trip() {
+        let event = Event::Diagnostics(DiagnosticsReport {
+            sections: vec![DiagnosticsSection::Panes],
+            unsupported_sections: vec![],
+            panes: vec![PaneDiagnostics {
+                pane_id: PaneId::Terminal(1),
+                tab_position: 0,
+                grid: Some(GridDiagnostics {
+                    viewport_rows: 24,
+                    viewport_cols: 80,
+                    scrollback_lines: 120,
+                    scrollback_limit: 10_000,
+                    in_alternate_screen: false,
+                }),
+            }],
+        });
+        let protobuf = ProtobufEvent::try_from(event.clone()).unwrap();
+        let decoded: ProtobufEvent = Message::decode(protobuf.encode_to_vec().as_slice()).unwrap();
+        assert_eq!(Event::try_from(decoded).unwrap(), event);
+        let protobuf: ProtobufEventType = EventType::Diagnostics.try_into().unwrap();
+        assert_eq!(
+            EventType::try_from(protobuf).unwrap(),
+            EventType::Diagnostics
         );
     }
 }

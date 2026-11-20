@@ -20,4 +20,5 @@ enum PermissionType {
   RunActionsAsUser = 14;
   WriteToClipboard = 15;
   ReadSessionEnvironmentVariables = 16;
+  ReadDiagnostics = 17;
 }
