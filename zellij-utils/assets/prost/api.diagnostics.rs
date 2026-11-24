@@ -91,6 +91,8 @@ pub struct ClientDiagnostics {
     pub last_frame_ack_us: ::core::option::Option<u64>,
     #[prost(uint64, optional, tag="7")]
     pub frame_awaiting_ack_us: ::core::option::Option<u64>,
+    #[prost(uint32, optional, tag="8")]
+    pub watching: ::core::option::Option<u32>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

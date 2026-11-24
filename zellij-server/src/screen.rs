@@ -7152,7 +7152,10 @@ impl Screen {
             clients.entry(*client_id).or_default().attached_as_web = Some(*is_web_client);
         }
         for client_id in self.watcher_clients.keys() {
-            clients.entry(*client_id).or_default().is_watcher = true;
+            let watcher = clients.entry(*client_id).or_default();
+            watcher.is_watcher = true;
+            // Every watcher mirrors the same client.
+            watcher.watching = self.followed_client_id;
         }
         for (client_id, host_terminal_env) in &self.client_host_terminal_env {
             if let Some(client) = clients.get_mut(client_id) {

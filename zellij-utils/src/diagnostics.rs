@@ -182,6 +182,9 @@ pub struct ClientDiagnostics {
     /// As in `list_clients`.
     pub client_id: ClientId,
     pub kind: ClientKind,
+    /// Watchers: the attached client whose screen they mirror. A watcher has
+    /// no plugin instances of its own; it sees that client's.
+    pub watching: Option<ClientId>,
     /// Renders reach this client as structured frames, each acknowledged,
     /// rather than as ANSI.
     pub structured_frames: bool,

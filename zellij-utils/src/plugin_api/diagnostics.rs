@@ -269,6 +269,7 @@ impl From<ProtobufClientDiagnostics> for ClientDiagnostics {
         ClientDiagnostics {
             client_id: client.client_id,
             kind: decode_client_kind(client.kind),
+            watching: client.watching,
             structured_frames: client.structured_frames,
             output_backlog: client.output_backlog,
             output_backlog_limit: client.output_backlog_limit,
@@ -283,6 +284,7 @@ impl From<ClientDiagnostics> for ProtobufClientDiagnostics {
         ProtobufClientDiagnostics {
             client_id: client.client_id,
             kind: encode_client_kind(client.kind),
+            watching: client.watching,
             structured_frames: client.structured_frames,
             output_backlog: client.output_backlog,
             output_backlog_limit: client.output_backlog_limit,
@@ -409,11 +411,20 @@ mod tests {
                 ClientDiagnostics {
                     client_id: 1,
                     kind: ClientKind::DesktopWindow,
+                    watching: None,
                     structured_frames: true,
                     output_backlog: Some(3),
                     output_backlog_limit: 5_000,
                     last_frame_ack_us: Some(1_850),
                     frame_awaiting_ack_us: None,
+                },
+                ClientDiagnostics {
+                    client_id: 3,
+                    kind: ClientKind::Watcher,
+                    watching: Some(1),
+                    output_backlog: Some(0),
+                    output_backlog_limit: 5_000,
+                    ..Default::default()
                 },
                 ClientDiagnostics {
                     client_id: 4,

@@ -99,6 +99,8 @@ pub(crate) struct ClientObservation {
     /// `Some(is_web_client)` for an attached client.
     pub attached_as_web: Option<bool>,
     pub is_watcher: bool,
+    /// Watchers: the client they mirror.
+    pub watching: Option<ClientId>,
     /// It reported `ZELLIJ_DESKTOP_TERMINAL` in its host environment.
     pub in_desktop_window: bool,
     pub structured_frames: bool,
@@ -132,6 +134,7 @@ pub(crate) fn collect_clients(
         .map(|(client_id, client)| ClientDiagnostics {
             client_id,
             kind: client_kind(&client),
+            watching: client.watching,
             structured_frames: client.structured_frames,
             output_backlog: client.output_backlog.map(|backlog| backlog as u64),
             output_backlog_limit: output_backlog_limit as u64,
@@ -319,6 +322,7 @@ mod tests {
             4,
             ClientObservation {
                 is_watcher: true,
+                watching: Some(1),
                 ..Default::default()
             },
         );
@@ -347,6 +351,8 @@ mod tests {
         assert_eq!(rows[1].frame_awaiting_ack_us, Some(3_000));
         assert!(rows[1].structured_frames && !rows[0].structured_frames);
         assert_eq!(rows[0].output_backlog, None, "no buffer was seen for it");
+        assert_eq!(rows[3].watching, Some(1));
+        assert_eq!(rows[0].watching, None);
     }
 
     #[test]
