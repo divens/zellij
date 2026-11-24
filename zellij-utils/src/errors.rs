@@ -652,6 +652,7 @@ pub enum PluginContext {
     ConfigFileChangedSinceRead,
     ListClientsToPlugin,
     DeliverDiagnostics,
+    RecordPluginError,
     ChangePluginHostDir,
     WebServerStarted,
     FailedToStartWebServer,

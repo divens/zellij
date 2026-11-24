@@ -5,7 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use zellij_utils::consts::VERSION;
 use zellij_utils::data::PaneId;
-use zellij_utils::diagnostics::{ClientKind, DiagnosticsReport, DiagnosticsSection};
+use zellij_utils::diagnostics::{
+    ClientKind, DiagnosticsReport, DiagnosticsSection, PluginErrorKind,
+};
 
 /// The report, with what a bug report also needs: which server made it, and
 /// when.
@@ -42,6 +44,7 @@ pub(crate) fn as_text(report: &DiagnosticsReport) -> Vec<String> {
             DiagnosticsSection::Plugins => plugins(report, &mut lines),
             DiagnosticsSection::Queues => queues(report, &mut lines),
             DiagnosticsSection::Clients => clients(report, &mut lines),
+            DiagnosticsSection::PluginErrors => plugin_errors(report, &mut lines),
             DiagnosticsSection::Unknown(_) => {},
         }
     }
@@ -276,6 +279,68 @@ fn clients(report: &DiagnosticsReport, lines: &mut Vec<String>) {
     );
 }
 
+fn plugin_errors(report: &DiagnosticsReport, lines: &mut Vec<String>) {
+    lines.push("Plugin errors".to_string());
+    if report.plugin_errors.is_empty() {
+        lines.push("  none".to_string());
+        return;
+    }
+    for log in &report.plugin_errors {
+        lines.push(format!(
+            "  plugin {} ({}): {} since it loaded, latest {} below",
+            log.plugin_id,
+            log.location,
+            log.total,
+            log.records.len()
+        ));
+        let rows = log
+            .records
+            .iter()
+            .map(|record| {
+                let mut what = record.command.clone().unwrap_or_default();
+                if let Some(permission) = &record.permission {
+                    what.push_str(&format!(" (needs {permission})"));
+                }
+                vec![
+                    local_time(record.unix_time_ms),
+                    error_kind_name(record.kind),
+                    what,
+                    if record.repeats > 1 {
+                        format!("x{}", record.repeats)
+                    } else {
+                        String::new()
+                    },
+                    record.message.clone(),
+                ]
+            })
+            .collect();
+        table(lines, &["TIME", "KIND", "COMMAND", "", "MESSAGE"], rows);
+    }
+}
+
+fn error_kind_name(kind: PluginErrorKind) -> String {
+    match kind {
+        PluginErrorKind::Failed => "failed".to_string(),
+        PluginErrorKind::Denied => "denied".to_string(),
+        PluginErrorKind::Forbidden => "forbidden".to_string(),
+        PluginErrorKind::Undecodable => "unreadable".to_string(),
+        PluginErrorKind::Crashed => "crashed".to_string(),
+        PluginErrorKind::LoadFailed => "load failed".to_string(),
+        PluginErrorKind::Unknown(number) => format!("kind {number}"),
+    }
+}
+
+/// The server's local time, as in its log: `2026-11-24 21:05:42.118`.
+fn local_time(unix_time_ms: u64) -> String {
+    chrono::DateTime::from_timestamp_millis(unix_time_ms as i64)
+        .map(|time| {
+            time.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S%.3f")
+                .to_string()
+        })
+        .unwrap_or_else(|| unix_time_ms.to_string())
+}
+
 /// Left-aligned columns, two spaces apart, indented by two.
 fn table(lines: &mut Vec<String>, header: &[&str], rows: Vec<Vec<String>>) {
     let mut widths: Vec<usize> = header.iter().map(|cell| cell.chars().count()).collect();
@@ -347,7 +412,7 @@ mod tests {
     use super::*;
     use zellij_utils::diagnostics::{
         ClientDiagnostics, GridDiagnostics, MemoryDiagnostics, PaneDiagnostics, PluginDiagnostics,
-        QueueDiagnostics,
+        PluginErrorLog, PluginErrorRecord, QueueDiagnostics,
     };
 
     fn sample() -> DiagnosticsReport {
@@ -405,6 +470,19 @@ mod tests {
                 output_backlog_limit: 5_000,
                 ..Default::default()
             }],
+            plugin_errors: vec![PluginErrorLog {
+                plugin_id: 5,
+                location: "zellij:tab-bar".to_string(),
+                total: 3,
+                records: vec![PluginErrorRecord {
+                    unix_time_ms: 1_795_547_345_498,
+                    kind: PluginErrorKind::Denied,
+                    command: Some("OpenFile".to_string()),
+                    permission: Some("OpenFiles".to_string()),
+                    message: "not granted".to_string(),
+                    repeats: 3,
+                }],
+            }],
             ..Default::default()
         }
     }
@@ -429,6 +507,14 @@ mod tests {
         assert!(text.contains("1.5 MiB of 16.0 MiB"), "{text}");
         assert!(text.contains("screen_bounded  50       50"), "{text}");
         assert!(text.contains("watching client 1"), "{text}");
+        assert!(
+            text.contains("plugin 5 (zellij:tab-bar): 3 since it loaded"),
+            "{text}"
+        );
+        assert!(
+            text.contains("denied  OpenFile (needs OpenFiles)  x3  not granted"),
+            "{text}"
+        );
         assert!(
             text.lines().all(|line| line == line.trim_end()),
             "no trailing spaces"

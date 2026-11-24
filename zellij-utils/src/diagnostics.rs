@@ -22,6 +22,9 @@ pub enum DiagnosticsSection {
     Queues,
     /// Every connection: what kind of client it is and its output backlog.
     Clients,
+    /// Each plugin's latest errors: failed, denied, forbidden and unreadable
+    /// commands, and crashes.
+    PluginErrors,
     /// A section this build doesn't know, by its wire number. It appears when
     /// a newer peer names a section, so a report can say which sections it
     /// could not fill in. Never request it.
@@ -30,12 +33,13 @@ pub enum DiagnosticsSection {
 
 impl DiagnosticsSection {
     /// Every section this build knows, in report order.
-    pub const ALL: [DiagnosticsSection; 5] = [
+    pub const ALL: [DiagnosticsSection; 6] = [
         DiagnosticsSection::Panes,
         DiagnosticsSection::Memory,
         DiagnosticsSection::Plugins,
         DiagnosticsSection::Queues,
         DiagnosticsSection::Clients,
+        DiagnosticsSection::PluginErrors,
     ];
 
     pub fn is_known(self) -> bool {
@@ -50,6 +54,7 @@ impl DiagnosticsSection {
             DiagnosticsSection::Plugins => "plugins".to_string(),
             DiagnosticsSection::Queues => "queues".to_string(),
             DiagnosticsSection::Clients => "clients".to_string(),
+            DiagnosticsSection::PluginErrors => "plugin-errors".to_string(),
             DiagnosticsSection::Unknown(number) => format!("section {number}"),
         }
     }
@@ -127,6 +132,70 @@ pub struct DiagnosticsReport {
     pub queues: Vec<QueueDiagnostics>,
     /// Ordered by client id.
     pub clients: Vec<ClientDiagnostics>,
+    /// Plugins that have had errors since they loaded, ordered by plugin id.
+    pub plugin_errors: Vec<PluginErrorLog>,
+}
+
+/// What went wrong.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PluginErrorKind {
+    /// The command ran and failed.
+    #[default]
+    Failed,
+    /// The plugin lacks the permission the command needs.
+    Denied,
+    /// A shared plugin used a "self" command outside `render` and
+    /// `slot_added`.
+    Forbidden,
+    /// The server couldn't read the command, for example from a plugin built
+    /// against a newer zellij-tile.
+    Undecodable,
+    /// The plugin panicked or its wasm trapped.
+    Crashed,
+    /// The plugin couldn't be loaded: not found, not valid wasm, or its
+    /// `load` failed.
+    LoadFailed,
+    /// A kind this build doesn't know, by its wire number.
+    Unknown(i32),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginErrorRecord {
+    /// When it last happened, in milliseconds since the Unix epoch.
+    pub unix_time_ms: u64,
+    pub kind: PluginErrorKind,
+    /// The command's type, as `CommandType` names it. `None` for crashes,
+    /// load failures and commands the server couldn't read.
+    pub command: Option<String>,
+    /// For a denial, the permission the command needs.
+    pub permission: Option<String>,
+    pub message: String,
+    /// How many times in a row this same error happened.
+    pub repeats: u32,
+}
+
+impl PluginErrorRecord {
+    /// The same error again: same kind, command, permission and message.
+    pub fn repeats_as(&self, other: &PluginErrorRecord) -> bool {
+        self.kind == other.kind
+            && self.command == other.command
+            && self.permission == other.permission
+            && self.message == other.message
+    }
+}
+
+/// One plugin's latest errors.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginErrorLog {
+    /// For a shared plugin, the id of its one instance.
+    pub plugin_id: u32,
+    /// Where the plugin was loaded from, as in the Plugins section.
+    pub location: String,
+    /// Every error since the plugin loaded, repeats included, even those the
+    /// log no longer holds.
+    pub total: u64,
+    /// The latest errors, oldest first.
+    pub records: Vec<PluginErrorRecord>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -12,7 +12,7 @@ pub use zellij_utils::desktop_integration;
 pub use zellij_utils::diagnostics::{
     ClientDiagnostics, ClientKind, DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection,
     ExecutorThreadDiagnostics, GridDiagnostics, MemoryDiagnostics, PaneDiagnostics,
-    PluginDiagnostics, QueueDiagnostics,
+    PluginDiagnostics, PluginErrorKind, PluginErrorLog, PluginErrorRecord, QueueDiagnostics,
 };
 pub use zellij_utils::errors::prelude::*;
 pub use zellij_utils::input::actions;

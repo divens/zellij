@@ -692,13 +692,19 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
     let mut env = caller.data_mut();
     let plugin_command = env.name();
     let err_context = || format!("failed to run plugin command {}", plugin_command);
-    wasi_read_bytes(env)
+    // Filled in as the command gets further, to say what went wrong if it
+    // fails: the plugin's error log keeps it (diagnostics).
+    let mut command_type: Option<CommandType> = None;
+    let mut forbidden = false;
+    let result = wasi_read_bytes(env)
         .and_then(|bytes| {
             let command: ProtobufPluginCommand = ProtobufPluginCommand::decode(bytes.as_slice())?;
             let command: PluginCommand = command
                 .try_into()
                 .map_err(|e| anyhow!("failed to convert serialized command: {}", e))?;
+            command_type = Some(CommandType::from(&command));
             if self_command_is_forbidden(&env, &command) {
+                forbidden = true;
                 if self_command_has_response(&command) {
                     wasi_write_object(env, &Vec::<u8>::new())?;
                 }
@@ -1547,10 +1553,37 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
                             .unwrap_or("UNKNOWN".to_owned()),
                         CommandType::from_str(&command.to_string()).with_context(err_context)?
                     );
+                    super::error_log::report(
+                        &env.senders,
+                        env.plugin_id,
+                        zellij_utils::diagnostics::PluginErrorKind::Denied,
+                        command_type,
+                        permission,
+                        "the plugin doesn't have the permission this command needs".to_owned(),
+                    );
                 },
             };
             Ok(())
-        })
+        });
+    if let Err(error) = &result {
+        use zellij_utils::diagnostics::PluginErrorKind;
+        let kind = if forbidden {
+            PluginErrorKind::Forbidden
+        } else if command_type.is_none() {
+            PluginErrorKind::Undecodable
+        } else {
+            PluginErrorKind::Failed
+        };
+        super::error_log::report(
+            &env.senders,
+            env.plugin_id,
+            kind,
+            command_type,
+            None,
+            format!("{error:#}"),
+        );
+    }
+    result
         .with_context(|| format!("failed to run plugin command {}", env.name()))
         .non_fatal();
 }

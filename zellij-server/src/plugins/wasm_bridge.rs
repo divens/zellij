@@ -41,7 +41,9 @@ use zellij_utils::data::{
     KeybindPresetWithError, KeybindsVec, LayoutInfo, LayoutWithError, PaneContents,
     PaneRenderReport, PermissionStatus, PermissionType, PipeMessage, PipeSource,
 };
-use zellij_utils::diagnostics::{DiagnosticsReport, DiagnosticsSection};
+use zellij_utils::diagnostics::{
+    DiagnosticsReport, DiagnosticsSection, PluginErrorLog, PluginErrorRecord,
+};
 use zellij_utils::downloader::Downloader;
 use zellij_utils::input::permission::PermissionCache;
 use zellij_utils::plugin_api::event::{event_to_protobuf_with_keybinds, ProtobufEvent};
@@ -321,6 +323,7 @@ pub struct WasmBridge {
     shared_slot_owner: HashMap<PluginId, PluginId>,
     shared_module_kinds: HashMap<String, bool>,
     settings_entries: SettingsEntries,
+    plugin_errors: super::error_log::PluginErrorLogs,
 }
 
 impl WasmBridge {
@@ -397,6 +400,7 @@ impl WasmBridge {
             shared_slot_owner: HashMap::new(),
             shared_module_kinds: HashMap::new(),
             settings_entries: SettingsEntries::default(),
+            plugin_errors: Default::default(),
         }
     }
     pub fn load_plugin(
@@ -656,6 +660,7 @@ impl WasmBridge {
     }
     pub fn unload_plugin(&mut self, pid: PluginId) -> Result<()> {
         info!("Bye from plugin {}", &pid);
+        self.plugin_errors.forget(pid);
         let _ = self
             .senders
             .send_to_screen(ScreenInstruction::ClearLiveViewsOfPlugin(pid));
@@ -1254,16 +1259,18 @@ impl WasmBridge {
             }
         }
     }
-    /// The plugin thread's share of a diagnostics report: the Plugins
-    /// section, and the process and plugin totals of the Memory section.
+    /// The plugin thread's share of a diagnostics report: the Plugins and
+    /// PluginErrors sections, and the process and plugin totals of the
+    /// Memory section.
     pub fn fill_diagnostics(&self, report: &mut DiagnosticsReport) {
         let wants_plugins = report.sections.contains(&DiagnosticsSection::Plugins);
-        if !wants_plugins && report.memory.is_none() {
+        let wants_errors = report.sections.contains(&DiagnosticsSection::PluginErrors);
+        if !wants_plugins && !wants_errors && report.memory.is_none() {
             return;
         }
         let (listed, linear_memory) = {
             let mut plugin_map = self.plugin_map.lock().unwrap();
-            let listed = if wants_plugins {
+            let listed = if wants_plugins || wants_errors {
                 plugin_map.list_plugins()
             } else {
                 BTreeMap::new()
@@ -1277,11 +1284,42 @@ impl WasmBridge {
                 .map(|plugin| plugin.total_bytes)
                 .sum();
         }
-        if !wants_plugins {
+        if !wants_plugins && !wants_errors {
             return;
         }
-        // A shared plugin's slots are listed as plugins of their own. They
-        // appear in their instance's row instead.
+        let identities = self.diagnostics_identities(listed);
+        if wants_errors {
+            report.plugin_errors = self
+                .plugin_errors
+                .logs()
+                .map(|(plugin_id, total, records)| PluginErrorLog {
+                    plugin_id,
+                    location: identities
+                        .get(&plugin_id)
+                        .map(|identity| identity.location.clone())
+                        .unwrap_or_default(),
+                    total,
+                    records,
+                })
+                .collect();
+        }
+        if wants_plugins {
+            let executor_threads = self.plugin_executor.diagnostics();
+            report.plugins = crate::diagnostics::collect_plugins(
+                identities,
+                &linear_memory,
+                &executor_threads,
+                LINEAR_MEMORY_LIMIT_BYTES as u64,
+            );
+            report.plugin_executor_threads = executor_threads;
+        }
+    }
+    /// Who each plugin is, for diagnostics. A shared plugin's slots are
+    /// listed as plugins of their own; they are folded into their instance.
+    fn diagnostics_identities(
+        &self,
+        listed: BTreeMap<PluginId, RunPlugin>,
+    ) -> BTreeMap<PluginId, crate::diagnostics::PluginIdentity> {
         let mut identities: BTreeMap<PluginId, crate::diagnostics::PluginIdentity> = listed
             .into_iter()
             .filter(|(plugin_id, _)| !self.shared_slot_owner.contains_key(plugin_id))
@@ -1300,14 +1338,27 @@ impl WasmBridge {
             };
             identities.insert(*instance_id, identity);
         }
-        let executor_threads = self.plugin_executor.diagnostics();
-        report.plugins = crate::diagnostics::collect_plugins(
-            identities,
-            &linear_memory,
-            &executor_threads,
-            LINEAR_MEMORY_LIMIT_BYTES as u64,
-        );
-        report.plugin_executor_threads = executor_threads;
+        identities
+    }
+    /// An error a plugin ran into, from whichever thread hit it. A slot of
+    /// a shared plugin is recorded under its instance; an error that arrives
+    /// after its plugin unloaded is dropped.
+    pub fn record_plugin_error(&mut self, plugin_id: PluginId, record: PluginErrorRecord) {
+        let plugin_id = self
+            .shared_slot_owner
+            .get(&plugin_id)
+            .copied()
+            .unwrap_or(plugin_id);
+        let is_loaded = self.shared_instances.contains_key(&plugin_id)
+            || self
+                .plugin_map
+                .lock()
+                .unwrap()
+                .run_plugin_of_plugin_id(plugin_id)
+                .is_some();
+        if is_loaded {
+            self.plugin_errors.record(plugin_id, record);
+        }
     }
     pub fn get_plugin_cwd(&self, plugin_id: PluginId, client_id: ClientId) -> Option<PathBuf> {
         if let Some(instance_id) = self.shared_instance_of(plugin_id) {
@@ -3066,6 +3117,7 @@ impl WasmBridge {
             if let Some(info) = self.shared_instances.remove(&instance_id) {
                 self.shared_keys.remove(&info.key);
             }
+            self.plugin_errors.forget(instance_id);
             self.plugin_executor.execute_plugin_unload(
                 instance_id,
                 move |senders, plugin_map, _connected_clients, _plugin_cache, _engine| {
@@ -3535,6 +3587,14 @@ pub fn handle_plugin_loading_failure(
     client_id: Option<ClientId>,
 ) {
     log::error!("{:?}", error);
+    super::error_log::report(
+        senders,
+        plugin_id,
+        zellij_utils::diagnostics::PluginErrorKind::LoadFailed,
+        None,
+        None,
+        format!("{:?}", error),
+    );
     let _ = senders.send_to_background_jobs(BackgroundJob::StopPluginLoadingAnimation(plugin_id));
     loading_indication.indicate_loading_error(format!("{:?}", error));
     let _ = senders.send_to_screen(ScreenInstruction::UpdatePluginLoadingStage(
@@ -3809,6 +3869,14 @@ pub fn apply_event_to_plugin(
 }
 
 pub fn handle_plugin_crash(plugin_id: PluginId, message: String, senders: ThreadSenders) {
+    super::error_log::report(
+        &senders,
+        plugin_id,
+        zellij_utils::diagnostics::PluginErrorKind::Crashed,
+        None,
+        None,
+        message.clone(),
+    );
     let mut loading_indication = LoadingIndication::new("Panic!".to_owned());
     loading_indication.indicate_loading_error(message);
     let _ = senders.send_to_screen(ScreenInstruction::UpdatePluginLoadingStage(

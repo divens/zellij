@@ -8,6 +8,16 @@ enum DiagnosticsSection {
   Plugins = 2;
   Queues = 3;
   Clients = 4;
+  PluginErrors = 5;
+}
+
+enum PluginErrorKind {
+  Failed = 0;
+  Denied = 1;
+  Forbidden = 2;
+  Undecodable = 3;
+  Crashed = 4;
+  LoadFailed = 5;
 }
 
 enum ClientKind {
@@ -33,6 +43,24 @@ message DiagnosticsReport {
   repeated ExecutorThreadDiagnostics plugin_executor_threads = 6;
   repeated QueueDiagnostics queues = 7;
   repeated ClientDiagnostics clients = 8;
+  repeated PluginErrorLog plugin_errors = 9;
+}
+
+message PluginErrorRecord {
+  uint64 unix_time_ms = 1;
+  // Kept as a number so a kind this build doesn't know survives decoding.
+  PluginErrorKind kind = 2;
+  optional string command = 3;
+  optional string permission = 4;
+  string message = 5;
+  uint32 repeats = 6;
+}
+
+message PluginErrorLog {
+  uint32 plugin_id = 1;
+  string location = 2;
+  uint64 total = 3;
+  repeated PluginErrorRecord records = 4;
 }
 
 message MemoryDiagnostics {

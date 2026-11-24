@@ -9763,6 +9763,129 @@ pub fn a_report_for_a_waiting_caller_is_filled_in_and_sent_back() {
     );
 }
 
+#[test]
+#[ignore]
+pub fn a_denied_command_lands_in_the_plugins_error_log() {
+    use crate::diagnostics::DiagnosticsReplyTo;
+    use zellij_utils::diagnostics::{DiagnosticsReport, DiagnosticsSection, PluginErrorKind};
+    let temp_folder = tempdir().unwrap(); // placed explicitly in the test scope because its
+                                          // destructor removes the directory
+    let plugin_host_folder = PathBuf::from(temp_folder.path());
+    let cache_path = plugin_host_folder.join("permissions_test.kdl");
+    let (plugin_thread_sender, screen_receiver, teardown) =
+        create_plugin_thread(Some(plugin_host_folder), None);
+    let client_id = 1;
+    let received_screen_instructions = Arc::new(Mutex::new(vec![]));
+    // Only answers the permission prompt; the test reads the report itself.
+    let screen_thread = grant_permissions_and_log_actions_until!(
+        received_screen_instructions,
+        screen_receiver,
+        &PermissionType::ReadDiagnostics,
+        cache_path,
+        plugin_thread_sender,
+        client_id,
+        |_event: &ScreenInstruction| false
+    );
+    load_diagnostics_fixture(&plugin_thread_sender, client_id);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let press = |c: char| {
+        let _ = plugin_thread_sender.send(PluginInstruction::Update(vec![(
+            None,
+            Some(client_id),
+            Event::Key(KeyWithModifier::new(BareKey::Char(c)).with_super_modifier()),
+        )]));
+    };
+    press('v'); // the fixture calls start_web_server, which it may not
+    press('v');
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let (sender, receiver) = crossbeam::channel::bounded(1);
+    let _ = plugin_thread_sender.send(PluginInstruction::DeliverDiagnostics(
+        DiagnosticsReport {
+            sections: vec![DiagnosticsSection::PluginErrors],
+            ..Default::default()
+        },
+        DiagnosticsReplyTo::Channel(sender),
+    ));
+    let report = receiver
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the plugin thread answers");
+    teardown();
+    screen_thread.join().unwrap();
+    let log = report
+        .plugin_errors
+        .iter()
+        .find(|log| log.plugin_id == 0)
+        .unwrap_or_else(|| panic!("the fixture has an error log: {:?}", report.plugin_errors));
+    assert!(log.location.contains("fixture-plugin-for-tests"), "{log:?}");
+    assert_eq!(log.total, 2);
+    let denied = log.records.last().expect("a record");
+    assert_eq!(denied.kind, PluginErrorKind::Denied);
+    assert_eq!(denied.command.as_deref(), Some("StartWebServer"));
+    assert_eq!(denied.permission.as_deref(), Some("StartWebServer"));
+    assert_eq!(denied.repeats, 2, "the same denial twice is one record");
+}
+
+#[test]
+pub fn a_plugin_that_fails_to_load_lands_in_its_error_log() {
+    use crate::diagnostics::DiagnosticsReplyTo;
+    use zellij_utils::diagnostics::{DiagnosticsReport, DiagnosticsSection, PluginErrorKind};
+    let temp_folder = tempdir().unwrap(); // placed explicitly in the test scope because its
+                                          // destructor removes the directory
+    let missing_plugin = temp_folder.path().join("no-such-plugin.wasm");
+    let (plugin_thread_sender, _screen_receiver, teardown) =
+        create_plugin_thread(Some(PathBuf::from(temp_folder.path())), None);
+    let client_id = 1;
+    let run_plugin = RunPluginOrAlias::RunPlugin(RunPlugin {
+        _allow_exec_host_cmd: false,
+        location: RunPluginLocation::File(missing_plugin),
+        ..Default::default()
+    });
+    let _ = plugin_thread_sender.send(PluginInstruction::AddClient(client_id));
+    let _ = plugin_thread_sender.send(PluginInstruction::Load(
+        Some(false),
+        false,
+        false, // close_replaced_pane
+        Some("missing".to_owned()),
+        run_plugin,
+        Some(1),
+        None,
+        client_id,
+        Size { cols: 80, rows: 20 },
+        None,
+        None,
+        false,
+        None,
+        None,
+        None,
+    ));
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let (sender, receiver) = crossbeam::channel::bounded(1);
+    let _ = plugin_thread_sender.send(PluginInstruction::DeliverDiagnostics(
+        DiagnosticsReport {
+            sections: vec![DiagnosticsSection::PluginErrors],
+            ..Default::default()
+        },
+        DiagnosticsReplyTo::Channel(sender),
+    ));
+    let report = receiver
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the plugin thread answers");
+    teardown();
+    let log = report
+        .plugin_errors
+        .first()
+        .unwrap_or_else(|| panic!("no error log: {:?}", report.plugin_errors));
+    assert!(log.location.contains("no-such-plugin.wasm"), "{log:?}");
+    let record = &log.records[0];
+    assert_eq!(record.kind, PluginErrorKind::LoadFailed);
+    assert!(record.command.is_none());
+    assert!(
+        !record.message.contains('\n'),
+        "kept on one line: {:?}",
+        record.message
+    );
+}
+
 /// The number right after `label` in `text`, as the fixture prints a report.
 fn number_after(text: &str, label: &str) -> Option<u64> {
     let start = text.find(label)? + label.len();

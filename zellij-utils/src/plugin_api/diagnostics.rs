@@ -6,13 +6,14 @@ pub use super::generated_api::api::diagnostics::{
     ExecutorThreadDiagnostics as ProtobufExecutorThreadDiagnostics,
     GridDiagnostics as ProtobufGridDiagnostics, MemoryDiagnostics as ProtobufMemoryDiagnostics,
     PaneDiagnostics as ProtobufPaneDiagnostics, PluginDiagnostics as ProtobufPluginDiagnostics,
-    QueueDiagnostics as ProtobufQueueDiagnostics,
+    PluginErrorKind as ProtobufPluginErrorKind, PluginErrorLog as ProtobufPluginErrorLog,
+    PluginErrorRecord as ProtobufPluginErrorRecord, QueueDiagnostics as ProtobufQueueDiagnostics,
 };
 use crate::data::PaneId;
 use crate::diagnostics::{
     ClientDiagnostics, ClientKind, DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection,
     ExecutorThreadDiagnostics, GridDiagnostics, MemoryDiagnostics, PaneDiagnostics,
-    PluginDiagnostics, QueueDiagnostics,
+    PluginDiagnostics, PluginErrorKind, PluginErrorLog, PluginErrorRecord, QueueDiagnostics,
 };
 
 use std::convert::TryFrom;
@@ -27,6 +28,7 @@ pub fn decode_section(value: i32) -> DiagnosticsSection {
         Ok(ProtobufDiagnosticsSection::Plugins) => DiagnosticsSection::Plugins,
         Ok(ProtobufDiagnosticsSection::Queues) => DiagnosticsSection::Queues,
         Ok(ProtobufDiagnosticsSection::Clients) => DiagnosticsSection::Clients,
+        Ok(ProtobufDiagnosticsSection::PluginErrors) => DiagnosticsSection::PluginErrors,
         Err(_) => DiagnosticsSection::Unknown(value),
     }
 }
@@ -38,6 +40,7 @@ pub fn encode_section(section: DiagnosticsSection) -> i32 {
         DiagnosticsSection::Plugins => ProtobufDiagnosticsSection::Plugins as i32,
         DiagnosticsSection::Queues => ProtobufDiagnosticsSection::Queues as i32,
         DiagnosticsSection::Clients => ProtobufDiagnosticsSection::Clients as i32,
+        DiagnosticsSection::PluginErrors => ProtobufDiagnosticsSection::PluginErrors as i32,
         DiagnosticsSection::Unknown(value) => value,
     }
 }
@@ -92,6 +95,7 @@ impl TryFrom<ProtobufDiagnosticsReport> for DiagnosticsReport {
                 .collect(),
             queues: report.queues.into_iter().map(Into::into).collect(),
             clients: report.clients.into_iter().map(Into::into).collect(),
+            plugin_errors: report.plugin_errors.into_iter().map(Into::into).collect(),
         })
     }
 }
@@ -111,6 +115,7 @@ impl From<DiagnosticsReport> for ProtobufDiagnosticsReport {
                 .collect(),
             queues: report.queues.into_iter().map(Into::into).collect(),
             clients: report.clients.into_iter().map(Into::into).collect(),
+            plugin_errors: report.plugin_errors.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -295,6 +300,78 @@ impl From<ClientDiagnostics> for ProtobufClientDiagnostics {
     }
 }
 
+fn decode_error_kind(value: i32) -> PluginErrorKind {
+    match ProtobufPluginErrorKind::try_from(value) {
+        Ok(ProtobufPluginErrorKind::Failed) => PluginErrorKind::Failed,
+        Ok(ProtobufPluginErrorKind::Denied) => PluginErrorKind::Denied,
+        Ok(ProtobufPluginErrorKind::Forbidden) => PluginErrorKind::Forbidden,
+        Ok(ProtobufPluginErrorKind::Undecodable) => PluginErrorKind::Undecodable,
+        Ok(ProtobufPluginErrorKind::Crashed) => PluginErrorKind::Crashed,
+        Ok(ProtobufPluginErrorKind::LoadFailed) => PluginErrorKind::LoadFailed,
+        Err(_) => PluginErrorKind::Unknown(value),
+    }
+}
+
+fn encode_error_kind(kind: PluginErrorKind) -> i32 {
+    match kind {
+        PluginErrorKind::Failed => ProtobufPluginErrorKind::Failed as i32,
+        PluginErrorKind::Denied => ProtobufPluginErrorKind::Denied as i32,
+        PluginErrorKind::Forbidden => ProtobufPluginErrorKind::Forbidden as i32,
+        PluginErrorKind::Undecodable => ProtobufPluginErrorKind::Undecodable as i32,
+        PluginErrorKind::Crashed => ProtobufPluginErrorKind::Crashed as i32,
+        PluginErrorKind::LoadFailed => ProtobufPluginErrorKind::LoadFailed as i32,
+        PluginErrorKind::Unknown(value) => value,
+    }
+}
+
+impl From<ProtobufPluginErrorRecord> for PluginErrorRecord {
+    fn from(record: ProtobufPluginErrorRecord) -> Self {
+        PluginErrorRecord {
+            unix_time_ms: record.unix_time_ms,
+            kind: decode_error_kind(record.kind),
+            command: record.command,
+            permission: record.permission,
+            message: record.message,
+            repeats: record.repeats,
+        }
+    }
+}
+
+impl From<PluginErrorRecord> for ProtobufPluginErrorRecord {
+    fn from(record: PluginErrorRecord) -> Self {
+        ProtobufPluginErrorRecord {
+            unix_time_ms: record.unix_time_ms,
+            kind: encode_error_kind(record.kind),
+            command: record.command,
+            permission: record.permission,
+            message: record.message,
+            repeats: record.repeats,
+        }
+    }
+}
+
+impl From<ProtobufPluginErrorLog> for PluginErrorLog {
+    fn from(log: ProtobufPluginErrorLog) -> Self {
+        PluginErrorLog {
+            plugin_id: log.plugin_id,
+            location: log.location,
+            total: log.total,
+            records: log.records.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<PluginErrorLog> for ProtobufPluginErrorLog {
+    fn from(log: PluginErrorLog) -> Self {
+        ProtobufPluginErrorLog {
+            plugin_id: log.plugin_id,
+            location: log.location,
+            total: log.total,
+            records: log.records.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
 impl From<ProtobufQueueDiagnostics> for QueueDiagnostics {
     fn from(queue: ProtobufQueueDiagnostics) -> Self {
         QueueDiagnostics {
@@ -458,6 +535,29 @@ mod tests {
                     grid: None,
                 },
             ],
+            plugin_errors: vec![PluginErrorLog {
+                plugin_id: 2,
+                location: "zellij:status-bar".to_string(),
+                total: 70,
+                records: vec![
+                    PluginErrorRecord {
+                        unix_time_ms: 1_795_547_345_498,
+                        kind: PluginErrorKind::Denied,
+                        command: Some("OpenFile".to_string()),
+                        permission: Some("OpenFiles".to_string()),
+                        message: "permission denied".to_string(),
+                        repeats: 3,
+                    },
+                    PluginErrorRecord {
+                        unix_time_ms: 1_795_547_345_600,
+                        kind: PluginErrorKind::Crashed,
+                        command: None,
+                        permission: None,
+                        message: "wasm trap: unreachable".to_string(),
+                        repeats: 1,
+                    },
+                ],
+            }],
         }
     }
 
@@ -539,6 +639,20 @@ mod tests {
         assert_eq!(decoded.kind, ClientKind::Unknown(FUTURE_SECTION));
         assert_eq!(
             ProtobufClientDiagnostics::from(decoded).kind,
+            FUTURE_SECTION
+        );
+    }
+
+    #[test]
+    fn an_error_kind_from_a_newer_server_keeps_its_number() {
+        let record = ProtobufPluginErrorRecord {
+            kind: FUTURE_SECTION,
+            ..Default::default()
+        };
+        let decoded = PluginErrorRecord::from(record);
+        assert_eq!(decoded.kind, PluginErrorKind::Unknown(FUTURE_SECTION));
+        assert_eq!(
+            ProtobufPluginErrorRecord::from(decoded).kind,
             FUTURE_SECTION
         );
     }

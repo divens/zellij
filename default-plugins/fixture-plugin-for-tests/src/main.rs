@@ -995,6 +995,11 @@ impl ZellijPlugin for State {
                 BareKey::Char('u') if key.has_only_modifiers(&[KeyModifier::Super]) => {
                     request_diagnostics(&[]);
                 },
+                BareKey::Char('v') if key.has_only_modifiers(&[KeyModifier::Super]) => {
+                    // This fixture never asks for StartWebServer, so the
+                    // diagnostics tests expect this to be denied and logged.
+                    start_web_server();
+                },
                 BareKey::Char('t') if key.has_only_modifiers(&[KeyModifier::Super]) => {
                     let session = self.target_session();
                     get_session_pane_preview(

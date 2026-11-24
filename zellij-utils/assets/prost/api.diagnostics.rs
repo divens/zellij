@@ -26,6 +26,37 @@ pub struct DiagnosticsReport {
     pub queues: ::prost::alloc::vec::Vec<QueueDiagnostics>,
     #[prost(message, repeated, tag="8")]
     pub clients: ::prost::alloc::vec::Vec<ClientDiagnostics>,
+    #[prost(message, repeated, tag="9")]
+    pub plugin_errors: ::prost::alloc::vec::Vec<PluginErrorLog>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PluginErrorRecord {
+    #[prost(uint64, tag="1")]
+    pub unix_time_ms: u64,
+    /// Kept as a number so a kind this build doesn't know survives decoding.
+    #[prost(enumeration="PluginErrorKind", tag="2")]
+    pub kind: i32,
+    #[prost(string, optional, tag="3")]
+    pub command: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="4")]
+    pub permission: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, tag="5")]
+    pub message: ::prost::alloc::string::String,
+    #[prost(uint32, tag="6")]
+    pub repeats: u32,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PluginErrorLog {
+    #[prost(uint32, tag="1")]
+    pub plugin_id: u32,
+    #[prost(string, tag="2")]
+    pub location: ::prost::alloc::string::String,
+    #[prost(uint64, tag="3")]
+    pub total: u64,
+    #[prost(message, repeated, tag="4")]
+    pub records: ::prost::alloc::vec::Vec<PluginErrorRecord>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -163,6 +194,7 @@ pub enum DiagnosticsSection {
     Plugins = 2,
     Queues = 3,
     Clients = 4,
+    PluginErrors = 5,
 }
 impl DiagnosticsSection {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -176,6 +208,7 @@ impl DiagnosticsSection {
             DiagnosticsSection::Plugins => "Plugins",
             DiagnosticsSection::Queues => "Queues",
             DiagnosticsSection::Clients => "Clients",
+            DiagnosticsSection::PluginErrors => "PluginErrors",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -186,6 +219,45 @@ impl DiagnosticsSection {
             "Plugins" => Some(Self::Plugins),
             "Queues" => Some(Self::Queues),
             "Clients" => Some(Self::Clients),
+            "PluginErrors" => Some(Self::PluginErrors),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PluginErrorKind {
+    Failed = 0,
+    Denied = 1,
+    Forbidden = 2,
+    Undecodable = 3,
+    Crashed = 4,
+    LoadFailed = 5,
+}
+impl PluginErrorKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            PluginErrorKind::Failed => "Failed",
+            PluginErrorKind::Denied => "Denied",
+            PluginErrorKind::Forbidden => "Forbidden",
+            PluginErrorKind::Undecodable => "Undecodable",
+            PluginErrorKind::Crashed => "Crashed",
+            PluginErrorKind::LoadFailed => "LoadFailed",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "Failed" => Some(Self::Failed),
+            "Denied" => Some(Self::Denied),
+            "Forbidden" => Some(Self::Forbidden),
+            "Undecodable" => Some(Self::Undecodable),
+            "Crashed" => Some(Self::Crashed),
+            "LoadFailed" => Some(Self::LoadFailed),
             _ => None,
         }
     }

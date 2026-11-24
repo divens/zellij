@@ -1,3 +1,4 @@
+mod error_log;
 mod linear_memory;
 mod pinned_executor;
 mod pipes;
@@ -241,6 +242,7 @@ pub enum PluginInstruction {
     WatchFilesystem,
     ListClientsToPlugin(SessionLayoutMetadata, PluginId, ClientId),
     DeliverDiagnostics(DiagnosticsReport, DiagnosticsReplyTo),
+    RecordPluginError(PluginId, zellij_utils::diagnostics::PluginErrorRecord),
     ChangePluginHostDir(PathBuf, PluginId, ClientId),
     WebServerStarted(String), // String -> the base url of the web server
     FailedToStartWebServer(String),
@@ -356,6 +358,7 @@ impl From<&PluginInstruction> for PluginContext {
             },
             PluginInstruction::ListClientsToPlugin(..) => PluginContext::ListClientsToPlugin,
             PluginInstruction::DeliverDiagnostics(..) => PluginContext::DeliverDiagnostics,
+            PluginInstruction::RecordPluginError(..) => PluginContext::RecordPluginError,
             PluginInstruction::ChangePluginHostDir(..) => PluginContext::ChangePluginHostDir,
             PluginInstruction::WebServerStarted(..) => PluginContext::WebServerStarted,
             PluginInstruction::FailedToStartWebServer(..) => PluginContext::FailedToStartWebServer,
@@ -1122,6 +1125,9 @@ pub(crate) fn plugin_thread_main(
                     Event::ListClients(client_list_for_plugin),
                 )];
                 wasm_bridge.update_plugins(updates, shutdown_send.clone())?;
+            },
+            PluginInstruction::RecordPluginError(plugin_id, record) => {
+                wasm_bridge.record_plugin_error(plugin_id, record);
             },
             PluginInstruction::DeliverDiagnostics(mut report, reply_to) => {
                 wasm_bridge.fill_diagnostics(&mut report);
