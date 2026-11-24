@@ -11,7 +11,7 @@ pub use zellij_utils::data::*;
 pub use zellij_utils::desktop_integration;
 pub use zellij_utils::diagnostics::{
     DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection, ExecutorThreadDiagnostics,
-    GridDiagnostics, MemoryDiagnostics, PaneDiagnostics, PluginDiagnostics,
+    GridDiagnostics, MemoryDiagnostics, PaneDiagnostics, PluginDiagnostics, QueueDiagnostics,
 };
 pub use zellij_utils::errors::prelude::*;
 pub use zellij_utils::input::actions;

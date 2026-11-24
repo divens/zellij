@@ -31,6 +31,22 @@ impl<T: Clone> SenderWithContext<T> {
     }
 }
 
+impl<T> SenderWithContext<T> {
+    /// Messages waiting in the channel.
+    pub fn len(&self) -> usize {
+        self.sender.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.sender.is_empty()
+    }
+
+    /// `None` for an unbounded channel.
+    pub fn capacity(&self) -> Option<usize> {
+        self.sender.capacity()
+    }
+}
+
 thread_local!(
     /// A key to some thread local storage (TLS) that holds a representation of the thread's call
     /// stack in the form of an [`ErrorContext`].

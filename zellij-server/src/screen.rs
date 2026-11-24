@@ -12191,6 +12191,9 @@ pub(crate) fn screen_thread_main(
                         &screen.kitty_image_store.borrow(),
                     ));
                 }
+                if request.includes(DiagnosticsSection::Queues) {
+                    report.queues = diagnostics::collect_queues(&screen.bus);
+                }
                 screen
                     .bus
                     .senders

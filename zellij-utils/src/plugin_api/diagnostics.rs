@@ -5,11 +5,12 @@ pub use super::generated_api::api::diagnostics::{
     ExecutorThreadDiagnostics as ProtobufExecutorThreadDiagnostics,
     GridDiagnostics as ProtobufGridDiagnostics, MemoryDiagnostics as ProtobufMemoryDiagnostics,
     PaneDiagnostics as ProtobufPaneDiagnostics, PluginDiagnostics as ProtobufPluginDiagnostics,
+    QueueDiagnostics as ProtobufQueueDiagnostics,
 };
 use crate::data::PaneId;
 use crate::diagnostics::{
     DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection, ExecutorThreadDiagnostics,
-    GridDiagnostics, MemoryDiagnostics, PaneDiagnostics, PluginDiagnostics,
+    GridDiagnostics, MemoryDiagnostics, PaneDiagnostics, PluginDiagnostics, QueueDiagnostics,
 };
 
 use std::convert::TryFrom;
@@ -21,6 +22,7 @@ fn decode_section(value: i32) -> DiagnosticsSection {
         Ok(ProtobufDiagnosticsSection::Panes) => DiagnosticsSection::Panes,
         Ok(ProtobufDiagnosticsSection::Memory) => DiagnosticsSection::Memory,
         Ok(ProtobufDiagnosticsSection::Plugins) => DiagnosticsSection::Plugins,
+        Ok(ProtobufDiagnosticsSection::Queues) => DiagnosticsSection::Queues,
         Err(_) => DiagnosticsSection::Unknown(value),
     }
 }
@@ -30,6 +32,7 @@ fn encode_section(section: DiagnosticsSection) -> i32 {
         DiagnosticsSection::Panes => ProtobufDiagnosticsSection::Panes as i32,
         DiagnosticsSection::Memory => ProtobufDiagnosticsSection::Memory as i32,
         DiagnosticsSection::Plugins => ProtobufDiagnosticsSection::Plugins as i32,
+        DiagnosticsSection::Queues => ProtobufDiagnosticsSection::Queues as i32,
         DiagnosticsSection::Unknown(value) => value,
     }
 }
@@ -82,6 +85,7 @@ impl TryFrom<ProtobufDiagnosticsReport> for DiagnosticsReport {
                 .into_iter()
                 .map(Into::into)
                 .collect(),
+            queues: report.queues.into_iter().map(Into::into).collect(),
         })
     }
 }
@@ -99,6 +103,7 @@ impl From<DiagnosticsReport> for ProtobufDiagnosticsReport {
                 .into_iter()
                 .map(Into::into)
                 .collect(),
+            queues: report.queues.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -231,6 +236,26 @@ impl From<PluginDiagnostics> for ProtobufPluginDiagnostics {
     }
 }
 
+impl From<ProtobufQueueDiagnostics> for QueueDiagnostics {
+    fn from(queue: ProtobufQueueDiagnostics) -> Self {
+        QueueDiagnostics {
+            name: queue.name,
+            depth: queue.depth,
+            capacity: queue.capacity,
+        }
+    }
+}
+
+impl From<QueueDiagnostics> for ProtobufQueueDiagnostics {
+    fn from(queue: QueueDiagnostics) -> Self {
+        ProtobufQueueDiagnostics {
+            name: queue.name,
+            depth: queue.depth,
+            capacity: queue.capacity,
+        }
+    }
+}
+
 impl From<ProtobufExecutorThreadDiagnostics> for ExecutorThreadDiagnostics {
     fn from(thread: ProtobufExecutorThreadDiagnostics) -> Self {
         ExecutorThreadDiagnostics {
@@ -310,6 +335,18 @@ mod tests {
                     index: 1,
                     jobs_in_flight: 3,
                     plugin_ids: vec![2, 5],
+                },
+            ],
+            queues: vec![
+                QueueDiagnostics {
+                    name: "screen".to_string(),
+                    depth: 12,
+                    capacity: None,
+                },
+                QueueDiagnostics {
+                    name: "screen_bounded".to_string(),
+                    depth: 50,
+                    capacity: Some(50),
                 },
             ],
             panes: vec![

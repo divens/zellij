@@ -6,16 +6,20 @@
 
 use std::collections::BTreeMap;
 
+use zellij_utils::channels::SenderWithContext;
 use zellij_utils::data::{ClientId, PaneId};
 use zellij_utils::diagnostics::{
     ExecutorThreadDiagnostics, MemoryDiagnostics, PaneDiagnostics, PluginDiagnostics,
+    QueueDiagnostics,
 };
 
 use crate::panes::cluster_table;
 use crate::panes::kitty_graphics::KittyImageStore;
 use crate::panes::PaneId as ServerPaneId;
 use crate::plugins::{PluginId, PluginLinearMemory};
+use crate::screen::ScreenInstruction;
 use crate::tab::{Pane, Tab};
+use crate::thread_bus::Bus;
 
 /// Where a finished report goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +89,53 @@ pub(crate) fn collect_memory<'a>(
         kitty_image_count: kitty_images.image_count() as u64,
         kitty_image_quota_bytes: kitty_images.quota_bytes() as u64,
         plugin_linear_memory_bytes: 0,
+    }
+}
+
+/// The screen's receivers, in the order `screen_bus` is built with in
+/// `lib.rs`: its main queue, then the bounded one the pty and plugin threads
+/// send through.
+const SCREEN_QUEUES: [&str; 2] = ["screen", "screen_bounded"];
+
+/// Messages waiting for each core thread. Runs on the screen thread: its own
+/// queues are read from its receivers, the others through its senders.
+pub(crate) fn collect_queues(bus: &Bus<ScreenInstruction>) -> Vec<QueueDiagnostics> {
+    let mut queues: Vec<QueueDiagnostics> = bus
+        .receiver_depths()
+        .into_iter()
+        .enumerate()
+        .map(|(index, (depth, capacity))| {
+            let name = SCREEN_QUEUES
+                .get(index)
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| format!("screen_{index}"));
+            queue(name, depth, capacity)
+        })
+        .collect();
+    if let Some(depth) = bus.priority_depth() {
+        queues.push(queue("screen_priority".to_string(), depth, None));
+    }
+    let senders = &bus.senders;
+    queues.extend(sender_queue("pty", senders.to_pty.as_ref()));
+    queues.extend(sender_queue("plugin", senders.to_plugin.as_ref()));
+    queues.extend(sender_queue("pty_writer", senders.to_pty_writer.as_ref()));
+    queues.extend(sender_queue(
+        "background_jobs",
+        senders.to_background_jobs.as_ref(),
+    ));
+    queues.extend(sender_queue("server", senders.to_server.as_ref()));
+    queues
+}
+
+fn sender_queue<T>(name: &str, sender: Option<&SenderWithContext<T>>) -> Option<QueueDiagnostics> {
+    sender.map(|sender| queue(name.to_string(), sender.len(), sender.capacity()))
+}
+
+fn queue(name: String, depth: usize, capacity: Option<usize>) -> QueueDiagnostics {
+    QueueDiagnostics {
+        name,
+        depth: depth as u64,
+        capacity: capacity.map(|capacity| capacity as u64),
     }
 }
 
@@ -193,6 +244,52 @@ mod tests {
             "no store yet: still loading, or failed to"
         );
         assert_eq!(rows[1].executor_thread, None);
+    }
+
+    #[test]
+    fn queues_are_named_by_the_thread_that_reads_them() {
+        use crate::pty::PtyInstruction;
+        use zellij_utils::channels;
+        let (to_screen, screen_receiver) = channels::unbounded();
+        let (to_screen_bounded, bounded_receiver) = channels::bounded(50);
+        let (to_priority, priority_receiver) = channels::unbounded();
+        let (to_pty, _pty_receiver) = channels::unbounded();
+        let to_screen = SenderWithContext::new(to_screen);
+        let to_screen_bounded = SenderWithContext::new(to_screen_bounded);
+        let to_priority = SenderWithContext::new(to_priority);
+        let to_pty = SenderWithContext::new(to_pty);
+        for _ in 0..3 {
+            to_screen.send(ScreenInstruction::Exit).unwrap();
+        }
+        to_screen_bounded.send(ScreenInstruction::Exit).unwrap();
+        to_pty.send(PtyInstruction::Exit).unwrap();
+        to_pty.send(PtyInstruction::Exit).unwrap();
+        let bus = Bus::new(
+            vec![screen_receiver, bounded_receiver],
+            None,
+            Some(&to_pty),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .with_priority(priority_receiver, &to_priority);
+        let queues = collect_queues(&bus);
+        let summary: Vec<(&str, u64, Option<u64>)> = queues
+            .iter()
+            .map(|queue| (queue.name.as_str(), queue.depth, queue.capacity))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("screen", 3, None),
+                ("screen_bounded", 1, Some(50)),
+                ("screen_priority", 0, None),
+                ("pty", 2, None),
+            ],
+            "threads without a sender are left out"
+        );
     }
 
     #[test]

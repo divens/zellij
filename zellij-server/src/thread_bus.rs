@@ -246,6 +246,22 @@ impl<T> Bus<T> {
         self
     }
 
+    /// Messages waiting in each receiver, in the order given to `new`, with
+    /// the receiver's capacity if it is bounded.
+    pub fn receiver_depths(&self) -> Vec<(usize, Option<usize>)> {
+        self.receivers
+            .iter()
+            .map(|receiver| (receiver.len(), receiver.capacity()))
+            .collect()
+    }
+
+    /// Messages waiting in the priority queue, if there is one.
+    pub fn priority_depth(&self) -> Option<usize> {
+        self.priority_receiver
+            .as_ref()
+            .map(|receiver| receiver.len())
+    }
+
     pub fn recv(&self) -> Result<(T, ErrorContext), channels::RecvError> {
         let Some(priority_receiver) = self.priority_receiver.as_ref() else {
             let mut selector = channels::Select::new();

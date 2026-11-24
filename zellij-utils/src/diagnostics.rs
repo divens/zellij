@@ -18,6 +18,8 @@ pub enum DiagnosticsSection {
     /// Running plugins: linear memory, workers, and the executor threads
     /// they run on.
     Plugins,
+    /// Messages waiting for each of the server's core threads.
+    Queues,
     /// A section this build doesn't know, by its wire number. It appears when
     /// a newer peer names a section, so a report can say which sections it
     /// could not fill in. Never request it.
@@ -26,10 +28,11 @@ pub enum DiagnosticsSection {
 
 impl DiagnosticsSection {
     /// Every section this build knows, in report order.
-    pub const ALL: [DiagnosticsSection; 3] = [
+    pub const ALL: [DiagnosticsSection; 4] = [
         DiagnosticsSection::Panes,
         DiagnosticsSection::Memory,
         DiagnosticsSection::Plugins,
+        DiagnosticsSection::Queues,
     ];
 
     pub fn is_known(self) -> bool {
@@ -98,6 +101,7 @@ pub struct DiagnosticsReport {
     /// The threads plugins run on, ordered by index. Filled in with
     /// `plugins`.
     pub plugin_executor_threads: Vec<ExecutorThreadDiagnostics>,
+    pub queues: Vec<QueueDiagnostics>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +151,23 @@ pub struct PluginDiagnostics {
     pub linear_memory_limit_bytes: u64,
     /// The executor thread the plugin runs on.
     pub executor_thread: Option<u32>,
+}
+
+/// One of the server's message queues, at the moment the report was made.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueDiagnostics {
+    /// The thread that reads it: `screen`, `screen_bounded` (what the pty and
+    /// plugin threads send to the screen), `screen_priority`, `pty`,
+    /// `plugin`, `pty_writer`, `background_jobs` or `server`. Newer servers
+    /// may add more.
+    pub name: String,
+    /// Messages waiting. A plugin's own request is measured while the plugin
+    /// thread is still finishing that `update` call, so `screen_bounded`
+    /// usually counts the one message it sends the screen afterwards.
+    pub depth: u64,
+    /// `None` for an unbounded queue. A bounded queue that is full blocks its
+    /// senders.
+    pub capacity: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

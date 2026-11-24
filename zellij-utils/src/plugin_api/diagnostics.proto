@@ -6,6 +6,7 @@ enum DiagnosticsSection {
   Panes = 0;
   Memory = 1;
   Plugins = 2;
+  Queues = 3;
 }
 
 message DiagnosticsRequest {
@@ -21,6 +22,7 @@ message DiagnosticsReport {
   MemoryDiagnostics memory = 4;
   repeated PluginDiagnostics plugins = 5;
   repeated ExecutorThreadDiagnostics plugin_executor_threads = 6;
+  repeated QueueDiagnostics queues = 7;
 }
 
 message MemoryDiagnostics {
@@ -46,6 +48,12 @@ message PluginDiagnostics {
   uint64 linear_memory_limit_bytes = 8;
   optional uint32 executor_thread = 9;
   repeated uint32 slot_ids = 10;
+}
+
+message QueueDiagnostics {
+  string name = 1;
+  uint64 depth = 2;
+  optional uint64 capacity = 3;
 }
 
 message ExecutorThreadDiagnostics {

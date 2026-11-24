@@ -21310,3 +21310,19 @@ pub fn the_memory_section_reports_the_shared_stores_against_their_limits() {
         "process memory is the plugin thread's to fill in"
     );
 }
+
+#[test]
+pub fn the_queues_section_covers_the_screen_and_the_threads_it_sends_to() {
+    use zellij_utils::diagnostics::{DiagnosticsRequest, DiagnosticsSection};
+    let (report, _) =
+        diagnostics_forwarded_for(DiagnosticsRequest::new(&[DiagnosticsSection::Queues]));
+    assert_eq!(report.sections, vec![DiagnosticsSection::Queues]);
+    assert!(report.memory.is_none() && report.panes.is_empty());
+    let names: Vec<&str> = report
+        .queues
+        .iter()
+        .map(|queue| queue.name.as_str())
+        .collect();
+    assert_eq!(names.first(), Some(&"screen"));
+    assert!(names.contains(&"plugin"), "{names:?}");
+}

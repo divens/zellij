@@ -22,6 +22,8 @@ pub struct DiagnosticsReport {
     pub plugins: ::prost::alloc::vec::Vec<PluginDiagnostics>,
     #[prost(message, repeated, tag="6")]
     pub plugin_executor_threads: ::prost::alloc::vec::Vec<ExecutorThreadDiagnostics>,
+    #[prost(message, repeated, tag="7")]
+    pub queues: ::prost::alloc::vec::Vec<QueueDiagnostics>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -68,6 +70,16 @@ pub struct PluginDiagnostics {
     pub executor_thread: ::core::option::Option<u32>,
     #[prost(uint32, repeated, tag="10")]
     pub slot_ids: ::prost::alloc::vec::Vec<u32>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueueDiagnostics {
+    #[prost(string, tag="1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(uint64, tag="2")]
+    pub depth: u64,
+    #[prost(uint64, optional, tag="3")]
+    pub capacity: ::core::option::Option<u64>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -126,6 +138,7 @@ pub enum DiagnosticsSection {
     Panes = 0,
     Memory = 1,
     Plugins = 2,
+    Queues = 3,
 }
 impl DiagnosticsSection {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -137,6 +150,7 @@ impl DiagnosticsSection {
             DiagnosticsSection::Panes => "Panes",
             DiagnosticsSection::Memory => "Memory",
             DiagnosticsSection::Plugins => "Plugins",
+            DiagnosticsSection::Queues => "Queues",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -145,6 +159,7 @@ impl DiagnosticsSection {
             "Panes" => Some(Self::Panes),
             "Memory" => Some(Self::Memory),
             "Plugins" => Some(Self::Plugins),
+            "Queues" => Some(Self::Queues),
             _ => None,
         }
     }
