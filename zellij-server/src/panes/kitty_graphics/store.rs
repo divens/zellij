@@ -246,6 +246,9 @@ impl KittyImageStore {
     pub fn image_count(&self) -> usize {
         self.images.len()
     }
+    pub fn quota_bytes(&self) -> usize {
+        self.quota_bytes
+    }
     fn bump_lru(&mut self) -> u64 {
         self.next_lru_stamp += 1;
         self.next_lru_stamp

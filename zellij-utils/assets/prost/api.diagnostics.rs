@@ -16,6 +16,28 @@ pub struct DiagnosticsReport {
     /// Requested sections the server doesn't know, by wire number.
     #[prost(enumeration="DiagnosticsSection", repeated, tag="3")]
     pub unsupported_sections: ::prost::alloc::vec::Vec<i32>,
+    #[prost(message, optional, tag="4")]
+    pub memory: ::core::option::Option<MemoryDiagnostics>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MemoryDiagnostics {
+    #[prost(uint64, optional, tag="1")]
+    pub process_rss_bytes: ::core::option::Option<u64>,
+    #[prost(uint64, tag="2")]
+    pub scrollback_bytes_estimate: u64,
+    #[prost(uint64, tag="3")]
+    pub grapheme_cluster_bytes: u64,
+    #[prost(uint64, tag="4")]
+    pub grapheme_cluster_entries: u64,
+    #[prost(uint64, tag="5")]
+    pub grapheme_cluster_limit_bytes: u64,
+    #[prost(uint64, tag="6")]
+    pub kitty_image_bytes: u64,
+    #[prost(uint64, tag="7")]
+    pub kitty_image_count: u64,
+    #[prost(uint64, tag="8")]
+    pub kitty_image_quota_bytes: u64,
 }
 /// Kept local so this file needs no imports (event.proto imports it).
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -35,6 +57,8 @@ pub struct PaneDiagnostics {
     pub tab_position: u32,
     #[prost(message, optional, tag="3")]
     pub grid: ::core::option::Option<GridDiagnostics>,
+    #[prost(uint32, tag="4")]
+    pub grid_count: u32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -49,11 +73,18 @@ pub struct GridDiagnostics {
     pub scrollback_limit: u64,
     #[prost(bool, tag="5")]
     pub in_alternate_screen: bool,
+    #[prost(uint64, tag="6")]
+    pub scrollback_cells: u64,
+    #[prost(uint64, tag="7")]
+    pub scrollback_bytes_estimate: u64,
+    #[prost(uint64, tag="8")]
+    pub lines_discarded: u64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum DiagnosticsSection {
     Panes = 0,
+    Memory = 1,
 }
 impl DiagnosticsSection {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -63,12 +94,14 @@ impl DiagnosticsSection {
     pub fn as_str_name(&self) -> &'static str {
         match self {
             DiagnosticsSection::Panes => "Panes",
+            DiagnosticsSection::Memory => "Memory",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
     pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
         match value {
             "Panes" => Some(Self::Panes),
+            "Memory" => Some(Self::Memory),
             _ => None,
         }
     }

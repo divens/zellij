@@ -2,11 +2,12 @@ pub use super::generated_api::api::diagnostics::{
     DiagnosticsPaneId as ProtobufDiagnosticsPaneId, DiagnosticsReport as ProtobufDiagnosticsReport,
     DiagnosticsRequest as ProtobufDiagnosticsRequest,
     DiagnosticsSection as ProtobufDiagnosticsSection, GridDiagnostics as ProtobufGridDiagnostics,
-    PaneDiagnostics as ProtobufPaneDiagnostics,
+    MemoryDiagnostics as ProtobufMemoryDiagnostics, PaneDiagnostics as ProtobufPaneDiagnostics,
 };
 use crate::data::PaneId;
 use crate::diagnostics::{
-    DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection, GridDiagnostics, PaneDiagnostics,
+    DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection, GridDiagnostics, MemoryDiagnostics,
+    PaneDiagnostics,
 };
 
 use std::convert::TryFrom;
@@ -16,6 +17,7 @@ use std::convert::TryFrom;
 fn decode_section(value: i32) -> DiagnosticsSection {
     match ProtobufDiagnosticsSection::try_from(value) {
         Ok(ProtobufDiagnosticsSection::Panes) => DiagnosticsSection::Panes,
+        Ok(ProtobufDiagnosticsSection::Memory) => DiagnosticsSection::Memory,
         Err(_) => DiagnosticsSection::Unknown(value),
     }
 }
@@ -23,6 +25,7 @@ fn decode_section(value: i32) -> DiagnosticsSection {
 fn encode_section(section: DiagnosticsSection) -> i32 {
     match section {
         DiagnosticsSection::Panes => ProtobufDiagnosticsSection::Panes as i32,
+        DiagnosticsSection::Memory => ProtobufDiagnosticsSection::Memory as i32,
         DiagnosticsSection::Unknown(value) => value,
     }
 }
@@ -68,6 +71,7 @@ impl TryFrom<ProtobufDiagnosticsReport> for DiagnosticsReport {
                 .into_iter()
                 .map(PaneDiagnostics::try_from)
                 .collect::<Result<_, _>>()?,
+            memory: report.memory.map(Into::into),
         })
     }
 }
@@ -78,6 +82,7 @@ impl From<DiagnosticsReport> for ProtobufDiagnosticsReport {
             sections: encode_sections(report.sections),
             unsupported_sections: encode_sections(report.unsupported_sections),
             panes: report.panes.into_iter().map(Into::into).collect(),
+            memory: report.memory.map(Into::into),
         }
     }
 }
@@ -93,6 +98,7 @@ impl TryFrom<ProtobufPaneDiagnostics> for PaneDiagnostics {
                 PaneId::Terminal(pane_id.id)
             },
             tab_position: pane.tab_position as usize,
+            grid_count: pane.grid_count,
             grid: pane.grid.map(Into::into),
         })
     }
@@ -107,6 +113,7 @@ impl From<PaneDiagnostics> for ProtobufPaneDiagnostics {
         ProtobufPaneDiagnostics {
             pane_id: Some(ProtobufDiagnosticsPaneId { id, is_plugin }),
             tab_position: pane.tab_position as u32,
+            grid_count: pane.grid_count,
             grid: pane.grid.map(Into::into),
         }
     }
@@ -119,6 +126,9 @@ impl From<ProtobufGridDiagnostics> for GridDiagnostics {
             viewport_cols: grid.viewport_cols,
             scrollback_lines: grid.scrollback_lines,
             scrollback_limit: grid.scrollback_limit,
+            scrollback_cells: grid.scrollback_cells,
+            scrollback_bytes_estimate: grid.scrollback_bytes_estimate,
+            lines_discarded: grid.lines_discarded,
             in_alternate_screen: grid.in_alternate_screen,
         }
     }
@@ -131,7 +141,40 @@ impl From<GridDiagnostics> for ProtobufGridDiagnostics {
             viewport_cols: grid.viewport_cols,
             scrollback_lines: grid.scrollback_lines,
             scrollback_limit: grid.scrollback_limit,
+            scrollback_cells: grid.scrollback_cells,
+            scrollback_bytes_estimate: grid.scrollback_bytes_estimate,
+            lines_discarded: grid.lines_discarded,
             in_alternate_screen: grid.in_alternate_screen,
+        }
+    }
+}
+
+impl From<ProtobufMemoryDiagnostics> for MemoryDiagnostics {
+    fn from(memory: ProtobufMemoryDiagnostics) -> Self {
+        MemoryDiagnostics {
+            process_rss_bytes: memory.process_rss_bytes,
+            scrollback_bytes_estimate: memory.scrollback_bytes_estimate,
+            grapheme_cluster_bytes: memory.grapheme_cluster_bytes,
+            grapheme_cluster_entries: memory.grapheme_cluster_entries,
+            grapheme_cluster_limit_bytes: memory.grapheme_cluster_limit_bytes,
+            kitty_image_bytes: memory.kitty_image_bytes,
+            kitty_image_count: memory.kitty_image_count,
+            kitty_image_quota_bytes: memory.kitty_image_quota_bytes,
+        }
+    }
+}
+
+impl From<MemoryDiagnostics> for ProtobufMemoryDiagnostics {
+    fn from(memory: MemoryDiagnostics) -> Self {
+        ProtobufMemoryDiagnostics {
+            process_rss_bytes: memory.process_rss_bytes,
+            scrollback_bytes_estimate: memory.scrollback_bytes_estimate,
+            grapheme_cluster_bytes: memory.grapheme_cluster_bytes,
+            grapheme_cluster_entries: memory.grapheme_cluster_entries,
+            grapheme_cluster_limit_bytes: memory.grapheme_cluster_limit_bytes,
+            kitty_image_bytes: memory.kitty_image_bytes,
+            kitty_image_count: memory.kitty_image_count,
+            kitty_image_quota_bytes: memory.kitty_image_quota_bytes,
         }
     }
 }
@@ -146,23 +189,38 @@ mod tests {
 
     fn sample_report() -> DiagnosticsReport {
         DiagnosticsReport {
-            sections: vec![DiagnosticsSection::Panes],
+            sections: vec![DiagnosticsSection::Panes, DiagnosticsSection::Memory],
             unsupported_sections: vec![],
+            memory: Some(MemoryDiagnostics {
+                process_rss_bytes: Some(212 * 1024 * 1024),
+                scrollback_bytes_estimate: 6_874_048,
+                grapheme_cluster_bytes: 4_096,
+                grapheme_cluster_entries: 12,
+                grapheme_cluster_limit_bytes: 32 * 1024 * 1024,
+                kitty_image_bytes: 18 * 1024 * 1024,
+                kitty_image_count: 3,
+                kitty_image_quota_bytes: 320 * 1024 * 1024,
+            }),
             panes: vec![
                 PaneDiagnostics {
                     pane_id: PaneId::Terminal(3),
                     tab_position: 1,
+                    grid_count: 1,
                     grid: Some(GridDiagnostics {
                         viewport_rows: 40,
                         viewport_cols: 120,
                         scrollback_lines: 9_876,
                         scrollback_limit: 10_000,
+                        scrollback_cells: 400_000,
+                        scrollback_bytes_estimate: 6_874_048,
+                        lines_discarded: 123_456,
                         in_alternate_screen: true,
                     }),
                 },
                 PaneDiagnostics {
                     pane_id: PaneId::Plugin(2),
                     tab_position: 0,
+                    grid_count: 3,
                     grid: None,
                 },
             ],
@@ -226,11 +284,21 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_process_size_stays_unknown() {
+        let report = DiagnosticsReport {
+            sections: vec![DiagnosticsSection::Memory],
+            memory: Some(MemoryDiagnostics::default()),
+            ..Default::default()
+        };
+        let decoded = over_the_wire(report);
+        assert_eq!(decoded.memory.unwrap().process_rss_bytes, None);
+    }
+
+    #[test]
     fn pane_diagnostics_need_a_pane_id() {
         let pane = ProtobufPaneDiagnostics {
             pane_id: None,
-            tab_position: 0,
-            grid: None,
+            ..Default::default()
         };
         assert!(PaneDiagnostics::try_from(pane).is_err());
     }

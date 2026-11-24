@@ -1002,6 +1002,10 @@ pub trait Pane {
     fn grid_diagnostics(&self) -> Option<zellij_utils::diagnostics::GridDiagnostics> {
         None
     }
+    /// How many grids the pane keeps, for diagnostics.
+    fn grid_count(&self) -> usize {
+        0
+    }
     fn hold(&mut self, _exit_status: Option<i32>, _is_first_run: bool, _run_command: RunCommand) {
         // No-op by default, only terminal panes support holding
     }

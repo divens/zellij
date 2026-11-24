@@ -160,6 +160,12 @@ pub fn bytes() -> usize {
     TABLE.try_with(|table| table.borrow().bytes).unwrap_or(0)
 }
 
+pub fn byte_limit() -> usize {
+    TABLE
+        .try_with(|table| table.borrow().limit)
+        .unwrap_or(DEFAULT_BYTE_LIMIT)
+}
+
 pub fn live_entries() -> usize {
     TABLE
         .try_with(|table| table.borrow().by_text.len())

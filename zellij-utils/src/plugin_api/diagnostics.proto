@@ -4,6 +4,7 @@ package api.diagnostics;
 
 enum DiagnosticsSection {
   Panes = 0;
+  Memory = 1;
 }
 
 message DiagnosticsRequest {
@@ -16,6 +17,18 @@ message DiagnosticsReport {
   repeated PaneDiagnostics panes = 2;
   // Requested sections the server doesn't know, by wire number.
   repeated DiagnosticsSection unsupported_sections = 3;
+  MemoryDiagnostics memory = 4;
+}
+
+message MemoryDiagnostics {
+  optional uint64 process_rss_bytes = 1;
+  uint64 scrollback_bytes_estimate = 2;
+  uint64 grapheme_cluster_bytes = 3;
+  uint64 grapheme_cluster_entries = 4;
+  uint64 grapheme_cluster_limit_bytes = 5;
+  uint64 kitty_image_bytes = 6;
+  uint64 kitty_image_count = 7;
+  uint64 kitty_image_quota_bytes = 8;
 }
 
 // Kept local so this file needs no imports (event.proto imports it).
@@ -28,6 +41,7 @@ message PaneDiagnostics {
   DiagnosticsPaneId pane_id = 1;
   uint32 tab_position = 2;
   GridDiagnostics grid = 3;
+  uint32 grid_count = 4;
 }
 
 message GridDiagnostics {
@@ -36,4 +50,7 @@ message GridDiagnostics {
   uint64 scrollback_lines = 3;
   uint64 scrollback_limit = 4;
   bool in_alternate_screen = 5;
+  uint64 scrollback_cells = 6;
+  uint64 scrollback_bytes_estimate = 7;
+  uint64 lines_discarded = 8;
 }

@@ -1121,15 +1121,20 @@ pub(crate) fn plugin_thread_main(
                 )];
                 wasm_bridge.update_plugins(updates, shutdown_send.clone())?;
             },
-            PluginInstruction::DeliverDiagnostics(report, reply_to) => match reply_to {
-                DiagnosticsReplyTo::Plugin {
-                    plugin_id,
-                    client_id,
-                } => {
-                    let updates =
-                        vec![(Some(plugin_id), Some(client_id), Event::Diagnostics(report))];
-                    wasm_bridge.update_plugins(updates, shutdown_send.clone())?;
-                },
+            PluginInstruction::DeliverDiagnostics(mut report, reply_to) => {
+                if let Some(memory) = report.memory.as_mut() {
+                    memory.process_rss_bytes = crate::diagnostics::process_rss_bytes();
+                }
+                match reply_to {
+                    DiagnosticsReplyTo::Plugin {
+                        plugin_id,
+                        client_id,
+                    } => {
+                        let updates =
+                            vec![(Some(plugin_id), Some(client_id), Event::Diagnostics(report))];
+                        wasm_bridge.update_plugins(updates, shutdown_send.clone())?;
+                    },
+                }
             },
             PluginInstruction::LogLayoutToHd(mut session_layout_metadata) => {
                 populate_session_layout_metadata(

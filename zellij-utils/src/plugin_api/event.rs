@@ -5620,14 +5620,19 @@ mod diagnostics_event_tests {
         let event = Event::Diagnostics(DiagnosticsReport {
             sections: vec![DiagnosticsSection::Panes],
             unsupported_sections: vec![],
+            memory: None,
             panes: vec![PaneDiagnostics {
                 pane_id: PaneId::Terminal(1),
                 tab_position: 0,
+                grid_count: 1,
                 grid: Some(GridDiagnostics {
                     viewport_rows: 24,
                     viewport_cols: 80,
                     scrollback_lines: 120,
                     scrollback_limit: 10_000,
+                    scrollback_cells: 3_000,
+                    scrollback_bytes_estimate: 53_760,
+                    lines_discarded: 0,
                     in_alternate_screen: false,
                 }),
             }],

@@ -456,6 +456,7 @@ fn transfer_rows_from_lines_above_to_viewport(
     viewport: &mut VecDeque<Row>,
     sixel_grid: &mut SixelGrid,
     kitty_grid: &mut KittyGrid,
+    lines_discarded: &mut u64,
     count: usize,
     max_viewport_width: usize,
 ) -> isize {
@@ -508,9 +509,13 @@ fn transfer_rows_from_lines_above_to_viewport(
         lines_added_to_viewport += 1;
     }
     for excess_row in next_lines {
-        if let Some(evicted_row_width) =
-            bounded_push(lines_above, sixel_grid, kitty_grid, excess_row)
-        {
+        if let Some(evicted_row_width) = bounded_push(
+            lines_above,
+            sixel_grid,
+            kitty_grid,
+            lines_discarded,
+            excess_row,
+        ) {
             display_row_delta +=
                 evicted_row_display_row_delta(lines_above, evicted_row_width, max_viewport_width);
         }
@@ -524,15 +529,20 @@ fn transfer_rows_from_viewport_to_lines_above(
     lines_above: &mut VecDeque<Row>,
     sixel_grid: &mut SixelGrid,
     kitty_grid: &mut KittyGrid,
+    lines_discarded: &mut u64,
     count: usize,
     width: usize,
 ) -> isize {
     let mut display_row_delta: isize = 0;
     let drained_lines = std::cmp::min(count, viewport.len());
     for next_line in viewport.drain(..drained_lines) {
-        if let Some(evicted_row_width) =
-            bounded_push(lines_above, sixel_grid, kitty_grid, next_line)
-        {
+        if let Some(evicted_row_width) = bounded_push(
+            lines_above,
+            sixel_grid,
+            kitty_grid,
+            lines_discarded,
+            next_line,
+        ) {
             display_row_delta +=
                 evicted_row_display_row_delta(lines_above, evicted_row_width, width);
         }
@@ -601,6 +611,7 @@ fn bounded_push(
     vec: &mut VecDeque<Row>,
     sixel_grid: &mut SixelGrid,
     kitty_grid: &mut KittyGrid,
+    lines_discarded: &mut u64,
     mut value: Row,
 ) -> Option<usize> {
     value.compress_trailing_blanks();
@@ -628,6 +639,7 @@ fn bounded_push(
                 kitty_grid.drop_first_canonical_anchor_line(first_canonical_row);
             }
             evicted_row_width = Some(line.width_cached());
+            *lines_discarded += 1;
         }
     }
     if vec.len() == vec.capacity() && vec.len() < scroll_buffer_size {
@@ -1006,6 +1018,9 @@ pub struct Grid {
     pub ring_bell: bool,
     scrollback_display_rows: usize,
     scrollback_epoch: u64,
+    /// Rows dropped from the front of `lines_above` at the scrollback limit,
+    /// since the pane was created.
+    lines_discarded: u64,
     pub mouse_mode: MouseMode,
     pub mouse_tracking: MouseTracking,
     pub focus_event_tracking: bool,
@@ -1402,6 +1417,7 @@ impl Grid {
             link_handler,
             ring_bell: false,
             scrollback_display_rows: 0,
+            lines_discarded: 0,
             mouse_mode: MouseMode::default(),
             mouse_tracking: MouseTracking::default(),
             focus_event_tracking: false,
@@ -1782,6 +1798,7 @@ impl Grid {
                 &mut self.viewport,
                 &mut self.sixel_grid,
                 &mut self.kitty_grid,
+                &mut self.lines_discarded,
                 1,
                 self.width,
             );
@@ -1819,6 +1836,7 @@ impl Grid {
                 &mut self.lines_above,
                 &mut self.sixel_grid,
                 &mut self.kitty_grid,
+                &mut self.lines_discarded,
                 line_to_push_up,
             );
             let mut display_row_delta = 1;
@@ -2066,6 +2084,7 @@ impl Grid {
                         &mut self.viewport,
                         &mut self.sixel_grid,
                         &mut self.kitty_grid,
+                        &mut self.lines_discarded,
                         row_count_to_transfer,
                         new_columns,
                     );
@@ -2094,6 +2113,7 @@ impl Grid {
                         &mut self.lines_above,
                         &mut self.sixel_grid,
                         &mut self.kitty_grid,
+                        &mut self.lines_discarded,
                         row_count_to_transfer,
                         new_columns,
                     );
@@ -4334,6 +4354,7 @@ impl Grid {
             &mut self.lines_above,
             &mut self.sixel_grid,
             &mut self.kitty_grid,
+            &mut self.lines_discarded,
             count,
             width,
         );
@@ -4949,8 +4970,20 @@ impl Grid {
         let history_held_aside = self
             .alternate_screen_state
             .as_ref()
-            .map_or(0, |state| state.lines_above.len());
-        let scrollback_lines = self.lines_above.len() + self.lines_below.len() + history_held_aside;
+            .map(|state| &state.lines_above);
+        let history = self
+            .lines_above
+            .iter()
+            .chain(self.lines_below.iter())
+            .chain(history_held_aside.into_iter().flatten());
+        let (scrollback_lines, scrollback_cells) = history
+            .fold((0usize, 0usize), |(lines, cells), row| {
+                (lines + 1, cells + row.columns.len())
+            });
+        // Rows store only their non-blank cells; styles and grapheme clusters
+        // are shared and not counted.
+        let scrollback_bytes_estimate = scrollback_lines * std::mem::size_of::<Row>()
+            + scrollback_cells * std::mem::size_of::<TerminalCharacter>();
         let scrollback_limit = SCROLL_BUFFER_SIZE
             .get()
             .copied()
@@ -4960,6 +4993,9 @@ impl Grid {
             viewport_cols: self.width as u32,
             scrollback_lines: scrollback_lines as u64,
             scrollback_limit: scrollback_limit as u64,
+            scrollback_cells: scrollback_cells as u64,
+            scrollback_bytes_estimate: scrollback_bytes_estimate as u64,
+            lines_discarded: self.lines_discarded,
             in_alternate_screen: self.is_alternate_mode_active(),
         }
     }

@@ -11610,6 +11610,14 @@ pub fn diagnostics_count_history_kept_aside_by_the_alternate_screen() {
     assert_eq!((primary.viewport_rows, primary.viewport_cols), (5, 20));
     assert_eq!(primary.scrollback_lines, 8);
     assert_eq!(primary.scrollback_limit, 10_000);
+    // Lines 1 to 8 are in scrollback, six cells each ("line N"): trailing
+    // blanks are not stored.
+    assert_eq!(primary.scrollback_cells, 48);
+    assert_eq!(
+        primary.scrollback_bytes_estimate,
+        8 * std::mem::size_of::<super::Row>() as u64 + 48 * 16
+    );
+    assert_eq!(primary.lines_discarded, 0);
     assert!(!primary.in_alternate_screen);
 
     vte_parser.feed(&mut grid, b"\x1b[?1049h");
@@ -11622,4 +11630,37 @@ pub fn diagnostics_count_history_kept_aside_by_the_alternate_screen() {
 
     vte_parser.feed(&mut grid, b"\x1b[?1049l");
     assert_eq!(grid.diagnostics(), primary);
+}
+
+#[test]
+pub fn diagnostics_count_lines_discarded_at_the_scrollback_limit() {
+    let mut vte_parser = vt_parser::Parser::new();
+    let debug = false;
+    let arrow_fonts = true;
+    let styled_underlines = true;
+    let osc8_hyperlinks = true;
+    let explicitly_disable_kitty_keyboard_protocol = false;
+    let mut grid = Grid::new(
+        5,
+        20,
+        Rc::new(RefCell::new(Palette::default())),
+        Rc::new(RefCell::new(HashMap::new())),
+        Rc::new(RefCell::new(LinkHandler::new())),
+        Rc::new(RefCell::new(None)),
+        Rc::new(RefCell::new(SixelImageStore::default())),
+        Rc::new(RefCell::new(KittyImageStore::default())),
+        Style::default(),
+        debug,
+        arrow_fonts,
+        styled_underlines,
+        osc8_hyperlinks,
+        explicitly_disable_kitty_keyboard_protocol,
+    );
+    // The limit is the default 10 000 lines in tests. 10 010 lines plus the
+    // cursor's line, minus the 5-row viewport, is 10 006 lines of history.
+    let output: String = (1..=10_010).map(|line| format!("{line}\r\n")).collect();
+    vte_parser.feed(&mut grid, output.as_bytes());
+    let diagnostics = grid.diagnostics();
+    assert_eq!(diagnostics.scrollback_lines, 10_000);
+    assert_eq!(diagnostics.lines_discarded, 6);
 }

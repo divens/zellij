@@ -525,6 +525,10 @@ impl Pane for PluginPane {
             },
         }
     }
+    fn grid_count(&self) -> usize {
+        // One per client that has seen this pane; entries are never removed.
+        self.grids.len()
+    }
     fn pid(&self) -> PaneId {
         PaneId::Plugin(self.pid)
     }

@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 pub enum DiagnosticsSection {
     /// Per-pane grid and scrollback state.
     Panes,
+    /// Memory held by the server: process total and shared stores.
+    Memory,
     /// A section this build doesn't know, by its wire number. It appears when
     /// a newer peer names a section, so a report can say which sections it
     /// could not fill in. Never request it.
@@ -21,7 +23,8 @@ pub enum DiagnosticsSection {
 
 impl DiagnosticsSection {
     /// Every section this build knows, in report order.
-    pub const ALL: [DiagnosticsSection; 1] = [DiagnosticsSection::Panes];
+    pub const ALL: [DiagnosticsSection; 2] =
+        [DiagnosticsSection::Panes, DiagnosticsSection::Memory];
 
     pub fn is_known(self) -> bool {
         !matches!(self, DiagnosticsSection::Unknown(_))
@@ -83,6 +86,25 @@ pub struct DiagnosticsReport {
     /// and this lists them all: the server is older than the request.
     pub unsupported_sections: Vec<DiagnosticsSection>,
     pub panes: Vec<PaneDiagnostics>,
+    pub memory: Option<MemoryDiagnostics>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryDiagnostics {
+    /// Resident memory of the server process, when the OS reports it.
+    pub process_rss_bytes: Option<u64>,
+    /// The sum of every pane's `scrollback_bytes_estimate`.
+    pub scrollback_bytes_estimate: u64,
+    /// Grapheme clusters too long to store inside a cell, shared by every
+    /// pane, against the table's limit.
+    pub grapheme_cluster_bytes: u64,
+    pub grapheme_cluster_entries: u64,
+    pub grapheme_cluster_limit_bytes: u64,
+    /// Decoded kitty graphics images, shared by every pane, against the
+    /// store's quota.
+    pub kitty_image_bytes: u64,
+    pub kitty_image_count: u64,
+    pub kitty_image_quota_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +112,9 @@ pub struct PaneDiagnostics {
     pub pane_id: PaneId,
     /// The position of the pane's tab, as in `PaneManifest`.
     pub tab_position: usize,
+    /// Grids the pane keeps: one for a terminal pane, and one per client
+    /// that has seen it for a plugin pane.
+    pub grid_count: u32,
     /// `None` for panes without a terminal grid, such as plugin panes.
     pub grid: Option<GridDiagnostics>,
 }
@@ -103,6 +128,13 @@ pub struct GridDiagnostics {
     pub scrollback_lines: u64,
     /// The `scroll_buffer_size` at which the oldest lines are dropped.
     pub scrollback_limit: u64,
+    /// Cells stored in those lines. Lines keep only their non-blank cells.
+    pub scrollback_cells: u64,
+    /// Approximate bytes those lines take, excluding styles and grapheme
+    /// clusters, which are shared.
+    pub scrollback_bytes_estimate: u64,
+    /// Lines dropped at the limit since the pane was created.
+    pub lines_discarded: u64,
     pub in_alternate_screen: bool,
 }
 

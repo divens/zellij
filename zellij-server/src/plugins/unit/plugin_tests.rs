@@ -9685,14 +9685,19 @@ pub fn diagnostics_are_delivered_to_the_requesting_plugin() {
     let report = DiagnosticsReport {
         sections: vec![DiagnosticsSection::Panes],
         unsupported_sections: vec![],
+        memory: None,
         panes: vec![PaneDiagnostics {
             pane_id: zellij_utils::data::PaneId::Terminal(1),
             tab_position: 0,
+            grid_count: 1,
             grid: Some(GridDiagnostics {
                 viewport_rows: 20,
                 viewport_cols: 80,
                 scrollback_lines: 4321,
                 scrollback_limit: 10_000,
+                scrollback_cells: 100_000,
+                scrollback_bytes_estimate: 1_807_408,
+                lines_discarded: 0,
                 in_alternate_screen: false,
             }),
         }],

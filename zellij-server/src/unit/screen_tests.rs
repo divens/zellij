@@ -21277,4 +21277,36 @@ pub fn a_diagnostics_request_reaches_the_plugin_thread_with_every_pane() {
         "ordered by tab: {panes:?}"
     );
     assert!(panes.iter().all(|(_, _, has_grid)| *has_grid), "{panes:?}");
+    assert!(
+        report.panes.iter().all(|pane| pane.grid_count == 1),
+        "a terminal pane keeps one grid"
+    );
+}
+
+#[test]
+pub fn the_memory_section_reports_the_shared_stores_against_their_limits() {
+    use crate::panes::cluster_table;
+    use crate::panes::kitty_graphics::store::DEFAULT_KITTY_STORE_QUOTA_BYTES;
+    use zellij_utils::diagnostics::{DiagnosticsRequest, DiagnosticsSection};
+    let (report, _) =
+        diagnostics_forwarded_for(DiagnosticsRequest::new(&[DiagnosticsSection::Memory]));
+    assert_eq!(report.sections, vec![DiagnosticsSection::Memory]);
+    assert!(
+        report.panes.is_empty(),
+        "the Panes section wasn't asked for"
+    );
+    let memory = report.memory.expect("the Memory section was filled in");
+    assert_eq!(
+        memory.grapheme_cluster_limit_bytes,
+        cluster_table::DEFAULT_BYTE_LIMIT as u64
+    );
+    assert_eq!(
+        memory.kitty_image_quota_bytes,
+        DEFAULT_KITTY_STORE_QUOTA_BYTES as u64
+    );
+    assert_eq!(memory.kitty_image_count, 0);
+    assert_eq!(
+        memory.process_rss_bytes, None,
+        "process memory is the plugin thread's to fill in"
+    );
 }

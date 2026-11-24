@@ -12185,6 +12185,12 @@ pub(crate) fn screen_thread_main(
                 if request.includes(DiagnosticsSection::Panes) {
                     report.panes = diagnostics::collect_panes(screen.get_tabs().values());
                 }
+                if request.includes(DiagnosticsSection::Memory) {
+                    report.memory = Some(diagnostics::collect_memory(
+                        screen.get_tabs().values(),
+                        &screen.kitty_image_store.borrow(),
+                    ));
+                }
                 screen
                     .bus
                     .senders
