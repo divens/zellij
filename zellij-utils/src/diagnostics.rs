@@ -15,6 +15,9 @@ pub enum DiagnosticsSection {
     Panes,
     /// Memory held by the server: process total and shared stores.
     Memory,
+    /// Running plugins: linear memory, workers, and the executor threads
+    /// they run on.
+    Plugins,
     /// A section this build doesn't know, by its wire number. It appears when
     /// a newer peer names a section, so a report can say which sections it
     /// could not fill in. Never request it.
@@ -23,8 +26,11 @@ pub enum DiagnosticsSection {
 
 impl DiagnosticsSection {
     /// Every section this build knows, in report order.
-    pub const ALL: [DiagnosticsSection; 2] =
-        [DiagnosticsSection::Panes, DiagnosticsSection::Memory];
+    pub const ALL: [DiagnosticsSection; 3] = [
+        DiagnosticsSection::Panes,
+        DiagnosticsSection::Memory,
+        DiagnosticsSection::Plugins,
+    ];
 
     pub fn is_known(self) -> bool {
         !matches!(self, DiagnosticsSection::Unknown(_))
@@ -87,6 +93,11 @@ pub struct DiagnosticsReport {
     pub unsupported_sections: Vec<DiagnosticsSection>,
     pub panes: Vec<PaneDiagnostics>,
     pub memory: Option<MemoryDiagnostics>,
+    /// Ordered by plugin id.
+    pub plugins: Vec<PluginDiagnostics>,
+    /// The threads plugins run on, ordered by index. Filled in with
+    /// `plugins`.
+    pub plugin_executor_threads: Vec<ExecutorThreadDiagnostics>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +116,47 @@ pub struct MemoryDiagnostics {
     pub kitty_image_bytes: u64,
     pub kitty_image_count: u64,
     pub kitty_image_quota_bytes: u64,
+    /// Linear memory of every plugin instance and worker.
+    pub plugin_linear_memory_bytes: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginDiagnostics {
+    /// For a shared plugin, the id of its one instance. The panes it renders
+    /// into have ids of their own: `slot_ids`.
+    pub plugin_id: u32,
+    /// Where the plugin was loaded from, as a URL: `zellij:tab-bar`,
+    /// `file:/path/to/plugin.wasm` or `https://…`.
+    pub location: String,
+    pub is_shared: bool,
+    /// For a shared plugin, the plugin ids of the panes and background slots
+    /// it serves, ordered. Empty otherwise.
+    pub slot_ids: Vec<u32>,
+    /// Instances of the plugin: one per client, or one if it is shared.
+    pub instances: u32,
+    /// Workers, across all instances. Each has its own linear memory.
+    pub workers: u32,
+    /// Linear memory of all instances and workers. It never shrinks, so it
+    /// is a high-water mark.
+    pub linear_memory_bytes: u64,
+    /// The largest single instance or worker. The limit applies to each one
+    /// separately, so this is the one that will hit it first.
+    pub largest_linear_memory_bytes: u64,
+    /// The size past which an instance or worker can't grow its memory: the
+    /// plugin traps.
+    pub linear_memory_limit_bytes: u64,
+    /// The executor thread the plugin runs on.
+    pub executor_thread: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutorThreadDiagnostics {
+    pub index: u32,
+    /// Jobs queued or running. Above 1, plugins on this thread are waiting
+    /// for each other.
+    pub jobs_in_flight: u32,
+    /// Ordered by id.
+    pub plugin_ids: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

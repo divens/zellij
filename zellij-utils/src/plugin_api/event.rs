@@ -5636,6 +5636,7 @@ mod diagnostics_event_tests {
                     in_alternate_screen: false,
                 }),
             }],
+            ..Default::default()
         });
         let protobuf = ProtobufEvent::try_from(event.clone()).unwrap();
         let decoded: ProtobufEvent = Message::decode(protobuf.encode_to_vec().as_slice()).unwrap();

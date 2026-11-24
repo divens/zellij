@@ -9701,6 +9701,7 @@ pub fn diagnostics_are_delivered_to_the_requesting_plugin() {
                 in_alternate_screen: false,
             }),
         }],
+        ..Default::default()
     };
     let _ = plugin_thread_sender.send(PluginInstruction::DeliverDiagnostics(
         report,
@@ -9726,6 +9727,88 @@ pub fn diagnostics_are_delivered_to_the_requesting_plugin() {
                 _ => false,
             });
     assert!(rendered_the_report, "the fixture never received the report");
+}
+
+/// The number right after `label` in `text`, as the fixture prints a report.
+fn number_after(text: &str, label: &str) -> Option<u64> {
+    let start = text.find(label)? + label.len();
+    text[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .ok()
+}
+
+#[test]
+#[ignore]
+pub fn the_plugin_thread_fills_in_the_plugins_section() {
+    use crate::diagnostics::DiagnosticsReplyTo;
+    use zellij_utils::diagnostics::{DiagnosticsReport, DiagnosticsSection, MemoryDiagnostics};
+    let temp_folder = tempdir().unwrap(); // placed explicitly in the test scope because its
+                                          // destructor removes the directory
+    let plugin_host_folder = PathBuf::from(temp_folder.path());
+    let cache_path = plugin_host_folder.join("permissions_test.kdl");
+    let (plugin_thread_sender, screen_receiver, teardown) =
+        create_plugin_thread(Some(plugin_host_folder), None);
+    let client_id = 1;
+    let received_screen_instructions = Arc::new(Mutex::new(vec![]));
+    let rendered_plugins = |event: &ScreenInstruction| match event {
+        ScreenInstruction::PluginBytes(plugin_render_assets) => plugin_render_assets
+            .iter()
+            .map(|asset| String::from_utf8_lossy(&asset.bytes).to_string())
+            .find(|text| text.contains("linear_memory_limit_bytes: 16777216")),
+        _ => None,
+    };
+    let screen_thread = grant_permissions_and_log_actions_until!(
+        received_screen_instructions,
+        screen_receiver,
+        &PermissionType::ReadDiagnostics,
+        cache_path,
+        plugin_thread_sender,
+        client_id,
+        move |event: &ScreenInstruction| rendered_plugins(event).is_some()
+    );
+    load_diagnostics_fixture(&plugin_thread_sender, client_id);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    // As the screen thread forwards it: sections resolved, Memory started.
+    let report = DiagnosticsReport {
+        sections: vec![DiagnosticsSection::Memory, DiagnosticsSection::Plugins],
+        memory: Some(MemoryDiagnostics::default()),
+        ..Default::default()
+    };
+    let _ = plugin_thread_sender.send(PluginInstruction::DeliverDiagnostics(
+        report,
+        DiagnosticsReplyTo::Plugin {
+            plugin_id: 0,
+            client_id,
+        },
+    ));
+    screen_thread.join().unwrap(); // this might take a while if the cache is cold
+    teardown();
+    let rendered = received_screen_instructions
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(rendered_plugins)
+        .expect("the fixture never rendered a Plugins section");
+    let row = &rendered[rendered
+        .find("PluginDiagnostics { plugin_id: 0,")
+        .expect("the fixture has a row")..];
+    assert!(row.contains("instances: 1,"), "{row}");
+    assert!(
+        row.contains("workers: 1,"),
+        "the fixture has a worker: {row}"
+    );
+    assert!(row.contains("executor_thread: Some("), "{row}");
+    let plugin_bytes = number_after(row, ", linear_memory_bytes: ").unwrap();
+    let largest = number_after(row, "largest_linear_memory_bytes: ").unwrap();
+    let total = number_after(&rendered, "plugin_linear_memory_bytes: ").unwrap();
+    assert!(
+        largest > 0 && largest < plugin_bytes,
+        "instance and worker: {row}"
+    );
+    assert!(total >= plugin_bytes, "{rendered}");
 }
 
 #[test]
@@ -14013,7 +14096,9 @@ fn plugin_env_without_read_pane_contents() -> super::plugin_map::PluginEnv {
         keybinds: Arc::new(Default::default()),
         intercepting_key_presses: false,
         pending_popup_size: None,
-        store_limits: wasmi::StoreLimitsBuilder::new().build(),
+        store_limits: crate::plugins::linear_memory::TrackedStoreLimits::new(
+            wasmi::StoreLimitsBuilder::new().build(),
+        ),
         shared: None,
     }
 }

@@ -4,7 +4,7 @@ use crate::plugins::pipes::{
     apply_pipe_message_to_plugin, pipes_to_block_or_unblock, PendingPipes, PipeRelease,
     PipeStateChange,
 };
-use crate::plugins::plugin_loader::PluginLoader;
+use crate::plugins::plugin_loader::{PluginLoader, LINEAR_MEMORY_LIMIT_BYTES};
 use crate::plugins::plugin_map::{
     AtomicEvent, PluginEnv, PluginMap, PluginMetadata, RemovedPluginAssets, RunningPlugin,
     SharedSlot, Subscriptions,
@@ -41,6 +41,7 @@ use zellij_utils::data::{
     KeybindPresetWithError, KeybindsVec, LayoutInfo, LayoutWithError, PaneContents,
     PaneRenderReport, PermissionStatus, PermissionType, PipeMessage, PipeSource,
 };
+use zellij_utils::diagnostics::{DiagnosticsReport, DiagnosticsSection};
 use zellij_utils::downloader::Downloader;
 use zellij_utils::input::permission::PermissionCache;
 use zellij_utils::plugin_api::event::{event_to_protobuf_with_keybinds, ProtobufEvent};
@@ -1252,6 +1253,61 @@ impl WasmBridge {
                 }
             }
         }
+    }
+    /// The plugin thread's share of a diagnostics report: the Plugins
+    /// section, and the process and plugin totals of the Memory section.
+    pub fn fill_diagnostics(&self, report: &mut DiagnosticsReport) {
+        let wants_plugins = report.sections.contains(&DiagnosticsSection::Plugins);
+        if !wants_plugins && report.memory.is_none() {
+            return;
+        }
+        let (listed, linear_memory) = {
+            let mut plugin_map = self.plugin_map.lock().unwrap();
+            let listed = if wants_plugins {
+                plugin_map.list_plugins()
+            } else {
+                BTreeMap::new()
+            };
+            (listed, plugin_map.linear_memory_by_plugin())
+        };
+        if let Some(memory) = report.memory.as_mut() {
+            memory.process_rss_bytes = crate::diagnostics::process_rss_bytes();
+            memory.plugin_linear_memory_bytes = linear_memory
+                .values()
+                .map(|plugin| plugin.total_bytes)
+                .sum();
+        }
+        if !wants_plugins {
+            return;
+        }
+        // A shared plugin's slots are listed as plugins of their own. They
+        // appear in their instance's row instead.
+        let mut identities: BTreeMap<PluginId, crate::diagnostics::PluginIdentity> = listed
+            .into_iter()
+            .filter(|(plugin_id, _)| !self.shared_slot_owner.contains_key(plugin_id))
+            .map(|(plugin_id, run_plugin)| {
+                let identity = crate::diagnostics::PluginIdentity {
+                    location: run_plugin.location.display(),
+                    shared_slots: None,
+                };
+                (plugin_id, identity)
+            })
+            .collect();
+        for (instance_id, info) in &self.shared_instances {
+            let identity = crate::diagnostics::PluginIdentity {
+                location: info.loading_context.plugin_config.location.display(),
+                shared_slots: Some(info.slots.iter().copied().collect()),
+            };
+            identities.insert(*instance_id, identity);
+        }
+        let executor_threads = self.plugin_executor.diagnostics();
+        report.plugins = crate::diagnostics::collect_plugins(
+            identities,
+            &linear_memory,
+            &executor_threads,
+            LINEAR_MEMORY_LIMIT_BYTES as u64,
+        );
+        report.plugin_executor_threads = executor_threads;
     }
     pub fn get_plugin_cwd(&self, plugin_id: PluginId, client_id: ClientId) -> Option<PathBuf> {
         if let Some(instance_id) = self.shared_instance_of(plugin_id) {

@@ -1,3 +1,4 @@
+use crate::plugins::linear_memory::{StoreRole, TrackedStoreLimits};
 use crate::plugins::plugin_map::{
     PluginEnv, PluginMap, PluginMetadata, RunningPlugin, SharedEnv, VecDequeInputStream,
     WriteOutputStream,
@@ -220,12 +221,22 @@ impl<'a> PluginLoader<'a> {
                     .call(&mut store, ())
                     .with_context(err_context)?;
 
+                self.plugin_map.register_linear_memory(
+                    self.plugin_id,
+                    StoreRole::Worker,
+                    store.data().store_limits.gauge(),
+                );
                 let worker = RunningWorker::new(store, instance, &function_name);
                 let worker_sender = plugin_worker(worker);
                 workers.insert(function_name.into(), worker_sender);
             }
         }
 
+        self.plugin_map.register_linear_memory(
+            self.plugin_id,
+            StoreRole::Instance,
+            store.data().store_limits.gauge(),
+        );
         let subscriptions = store.data().subscriptions.clone();
         let in_blocking_call = store
             .data()
@@ -320,7 +331,7 @@ impl<'a> PluginLoader<'a> {
             pending_popup_size: None,
             stdin_pipe,
             stdout_pipe,
-            store_limits: create_optimized_store_limits(),
+            store_limits: TrackedStoreLimits::new(create_optimized_store_limits()),
             shared: None,
         };
         let mut store = Store::new(&self.engine, plugin_env);
@@ -433,7 +444,7 @@ impl<'a> PluginLoader<'a> {
             pending_popup_size: None,
             stdin_pipe,
             stdout_pipe,
-            store_limits: create_optimized_store_limits(),
+            store_limits: TrackedStoreLimits::new(create_optimized_store_limits()),
             shared: None,
         };
         let mut store = Store::new(&self.engine, plugin_env);
@@ -518,12 +529,15 @@ impl<'a> PluginLoader<'a> {
     }
 }
 
+/// The most linear memory one plugin instance or worker can grow to.
+pub const LINEAR_MEMORY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
+
 fn create_optimized_store_limits() -> StoreLimits {
     use wasmi::StoreLimitsBuilder;
     StoreLimitsBuilder::new()
         .instances(1) // One instance per plugin
         .memories(4) // Max 4 linear memories per plugin
-        .memory_size(16 * 1024 * 1024) // 16MB per memory maximum
+        .memory_size(LINEAR_MEMORY_LIMIT_BYTES) // per memory maximum
         .tables(16) // Small table element limit
         .trap_on_grow_failure(true) // Fail fast on resource exhaustion
         .build()

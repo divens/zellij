@@ -5,6 +5,7 @@ package api.diagnostics;
 enum DiagnosticsSection {
   Panes = 0;
   Memory = 1;
+  Plugins = 2;
 }
 
 message DiagnosticsRequest {
@@ -18,6 +19,8 @@ message DiagnosticsReport {
   // Requested sections the server doesn't know, by wire number.
   repeated DiagnosticsSection unsupported_sections = 3;
   MemoryDiagnostics memory = 4;
+  repeated PluginDiagnostics plugins = 5;
+  repeated ExecutorThreadDiagnostics plugin_executor_threads = 6;
 }
 
 message MemoryDiagnostics {
@@ -29,6 +32,26 @@ message MemoryDiagnostics {
   uint64 kitty_image_bytes = 6;
   uint64 kitty_image_count = 7;
   uint64 kitty_image_quota_bytes = 8;
+  uint64 plugin_linear_memory_bytes = 9;
+}
+
+message PluginDiagnostics {
+  uint32 plugin_id = 1;
+  string location = 2;
+  bool is_shared = 3;
+  uint32 instances = 4;
+  uint32 workers = 5;
+  uint64 linear_memory_bytes = 6;
+  uint64 largest_linear_memory_bytes = 7;
+  uint64 linear_memory_limit_bytes = 8;
+  optional uint32 executor_thread = 9;
+  repeated uint32 slot_ids = 10;
+}
+
+message ExecutorThreadDiagnostics {
+  uint32 index = 1;
+  uint32 jobs_in_flight = 2;
+  repeated uint32 plugin_ids = 3;
 }
 
 // Kept local so this file needs no imports (event.proto imports it).

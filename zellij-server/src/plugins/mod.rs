@@ -1,3 +1,4 @@
+mod linear_memory;
 mod pinned_executor;
 mod pipes;
 mod plugin_loader;
@@ -11,6 +12,7 @@ mod watch_filesystem;
 mod zellij_exports;
 use log::info;
 
+pub(crate) use linear_memory::PluginLinearMemory;
 pub use pinned_executor::PinnedExecutor;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -1122,9 +1124,7 @@ pub(crate) fn plugin_thread_main(
                 wasm_bridge.update_plugins(updates, shutdown_send.clone())?;
             },
             PluginInstruction::DeliverDiagnostics(mut report, reply_to) => {
-                if let Some(memory) = report.memory.as_mut() {
-                    memory.process_rss_bytes = crate::diagnostics::process_rss_bytes();
-                }
+                wasm_bridge.fill_diagnostics(&mut report);
                 match reply_to {
                     DiagnosticsReplyTo::Plugin {
                         plugin_id,

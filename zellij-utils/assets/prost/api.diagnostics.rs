@@ -18,6 +18,10 @@ pub struct DiagnosticsReport {
     pub unsupported_sections: ::prost::alloc::vec::Vec<i32>,
     #[prost(message, optional, tag="4")]
     pub memory: ::core::option::Option<MemoryDiagnostics>,
+    #[prost(message, repeated, tag="5")]
+    pub plugins: ::prost::alloc::vec::Vec<PluginDiagnostics>,
+    #[prost(message, repeated, tag="6")]
+    pub plugin_executor_threads: ::prost::alloc::vec::Vec<ExecutorThreadDiagnostics>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -38,6 +42,42 @@ pub struct MemoryDiagnostics {
     pub kitty_image_count: u64,
     #[prost(uint64, tag="8")]
     pub kitty_image_quota_bytes: u64,
+    #[prost(uint64, tag="9")]
+    pub plugin_linear_memory_bytes: u64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PluginDiagnostics {
+    #[prost(uint32, tag="1")]
+    pub plugin_id: u32,
+    #[prost(string, tag="2")]
+    pub location: ::prost::alloc::string::String,
+    #[prost(bool, tag="3")]
+    pub is_shared: bool,
+    #[prost(uint32, tag="4")]
+    pub instances: u32,
+    #[prost(uint32, tag="5")]
+    pub workers: u32,
+    #[prost(uint64, tag="6")]
+    pub linear_memory_bytes: u64,
+    #[prost(uint64, tag="7")]
+    pub largest_linear_memory_bytes: u64,
+    #[prost(uint64, tag="8")]
+    pub linear_memory_limit_bytes: u64,
+    #[prost(uint32, optional, tag="9")]
+    pub executor_thread: ::core::option::Option<u32>,
+    #[prost(uint32, repeated, tag="10")]
+    pub slot_ids: ::prost::alloc::vec::Vec<u32>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ExecutorThreadDiagnostics {
+    #[prost(uint32, tag="1")]
+    pub index: u32,
+    #[prost(uint32, tag="2")]
+    pub jobs_in_flight: u32,
+    #[prost(uint32, repeated, tag="3")]
+    pub plugin_ids: ::prost::alloc::vec::Vec<u32>,
 }
 /// Kept local so this file needs no imports (event.proto imports it).
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -85,6 +125,7 @@ pub struct GridDiagnostics {
 pub enum DiagnosticsSection {
     Panes = 0,
     Memory = 1,
+    Plugins = 2,
 }
 impl DiagnosticsSection {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -95,6 +136,7 @@ impl DiagnosticsSection {
         match self {
             DiagnosticsSection::Panes => "Panes",
             DiagnosticsSection::Memory => "Memory",
+            DiagnosticsSection::Plugins => "Plugins",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -102,6 +144,7 @@ impl DiagnosticsSection {
         match value {
             "Panes" => Some(Self::Panes),
             "Memory" => Some(Self::Memory),
+            "Plugins" => Some(Self::Plugins),
             _ => None,
         }
     }

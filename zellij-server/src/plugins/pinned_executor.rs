@@ -8,6 +8,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use wasmi::Engine;
+use zellij_utils::diagnostics::ExecutorThreadDiagnostics;
 
 /// A dynamic thread pool that pins jobs to specific threads based on plugin_id
 /// Starts with 1 thread and expands when threads are busy, shrinks when plugins unload
@@ -365,6 +366,32 @@ impl PinnedExecutor {
         }
     }
 
+    /// Every live thread, with its jobs in flight and the plugins pinned to
+    /// it. Holds one lock at a time: `register_plugin` and `try_shrink_pool`
+    /// take `thread_plugins` and `execution_threads` in opposite orders, so
+    /// holding both here could join a deadlock between them.
+    pub fn diagnostics(&self) -> Vec<ExecutorThreadDiagnostics> {
+        let thread_plugins = self.thread_plugins.lock().unwrap().clone();
+        let threads = self.execution_threads.lock().unwrap();
+        threads
+            .iter()
+            .enumerate()
+            .filter_map(|(index, thread)| {
+                let thread = thread.as_ref()?;
+                let mut plugin_ids: Vec<u32> = thread_plugins
+                    .get(&index)
+                    .map(|ids| ids.iter().copied().collect())
+                    .unwrap_or_default();
+                plugin_ids.sort_unstable();
+                Some(ExecutorThreadDiagnostics {
+                    index: index as u32,
+                    jobs_in_flight: thread.jobs_in_flight.load(Ordering::SeqCst) as u32,
+                    plugin_ids,
+                })
+            })
+            .collect()
+    }
+
     #[cfg(test)]
     pub fn thread_count(&self) -> usize {
         self.execution_threads
@@ -484,6 +511,29 @@ mod tests {
         });
         rx.recv_timeout(Duration::from_secs(5))
             .expect("Thread name should be received")
+    }
+
+    #[test]
+    fn diagnostics_list_each_thread_with_its_plugins_and_jobs() {
+        let executor = create_test_executor(4);
+        executor.register_plugin(7);
+        executor.register_plugin(3);
+        let (started_tx, started_rx) = channel::<()>();
+        let (release_tx, release_rx) = channel::<()>();
+        executor.execute_for_plugin(7, move |_s, _p, _c, _ca, _e| {
+            started_tx.send(()).unwrap();
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            executor.diagnostics(),
+            vec![ExecutorThreadDiagnostics {
+                index: 0,
+                jobs_in_flight: 1,
+                plugin_ids: vec![3, 7],
+            }]
+        );
+        release_tx.send(()).unwrap();
     }
 
     #[test]

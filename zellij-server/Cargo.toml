@@ -43,6 +43,9 @@ url = { workspace = true }
 uuid = { workspace = true }
 memchr = "2.7"
 wasmi_wasi = { version = "1.1.0" }
+# Only to name `LimiterError`, which wasmi's `ResourceLimiter` uses but doesn't
+# re-export. Keep it on wasmi's version.
+wasmi_core = { version = "1.1.0", default-features = false }
 zellij-utils = { workspace = true }
 once_cell = "1.19"
 num_cpus = { workspace = true }

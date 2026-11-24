@@ -1,13 +1,15 @@
 pub use super::generated_api::api::diagnostics::{
     DiagnosticsPaneId as ProtobufDiagnosticsPaneId, DiagnosticsReport as ProtobufDiagnosticsReport,
     DiagnosticsRequest as ProtobufDiagnosticsRequest,
-    DiagnosticsSection as ProtobufDiagnosticsSection, GridDiagnostics as ProtobufGridDiagnostics,
-    MemoryDiagnostics as ProtobufMemoryDiagnostics, PaneDiagnostics as ProtobufPaneDiagnostics,
+    DiagnosticsSection as ProtobufDiagnosticsSection,
+    ExecutorThreadDiagnostics as ProtobufExecutorThreadDiagnostics,
+    GridDiagnostics as ProtobufGridDiagnostics, MemoryDiagnostics as ProtobufMemoryDiagnostics,
+    PaneDiagnostics as ProtobufPaneDiagnostics, PluginDiagnostics as ProtobufPluginDiagnostics,
 };
 use crate::data::PaneId;
 use crate::diagnostics::{
-    DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection, GridDiagnostics, MemoryDiagnostics,
-    PaneDiagnostics,
+    DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection, ExecutorThreadDiagnostics,
+    GridDiagnostics, MemoryDiagnostics, PaneDiagnostics, PluginDiagnostics,
 };
 
 use std::convert::TryFrom;
@@ -18,6 +20,7 @@ fn decode_section(value: i32) -> DiagnosticsSection {
     match ProtobufDiagnosticsSection::try_from(value) {
         Ok(ProtobufDiagnosticsSection::Panes) => DiagnosticsSection::Panes,
         Ok(ProtobufDiagnosticsSection::Memory) => DiagnosticsSection::Memory,
+        Ok(ProtobufDiagnosticsSection::Plugins) => DiagnosticsSection::Plugins,
         Err(_) => DiagnosticsSection::Unknown(value),
     }
 }
@@ -26,6 +29,7 @@ fn encode_section(section: DiagnosticsSection) -> i32 {
     match section {
         DiagnosticsSection::Panes => ProtobufDiagnosticsSection::Panes as i32,
         DiagnosticsSection::Memory => ProtobufDiagnosticsSection::Memory as i32,
+        DiagnosticsSection::Plugins => ProtobufDiagnosticsSection::Plugins as i32,
         DiagnosticsSection::Unknown(value) => value,
     }
 }
@@ -72,6 +76,12 @@ impl TryFrom<ProtobufDiagnosticsReport> for DiagnosticsReport {
                 .map(PaneDiagnostics::try_from)
                 .collect::<Result<_, _>>()?,
             memory: report.memory.map(Into::into),
+            plugins: report.plugins.into_iter().map(Into::into).collect(),
+            plugin_executor_threads: report
+                .plugin_executor_threads
+                .into_iter()
+                .map(Into::into)
+                .collect(),
         })
     }
 }
@@ -83,6 +93,12 @@ impl From<DiagnosticsReport> for ProtobufDiagnosticsReport {
             unsupported_sections: encode_sections(report.unsupported_sections),
             panes: report.panes.into_iter().map(Into::into).collect(),
             memory: report.memory.map(Into::into),
+            plugins: report.plugins.into_iter().map(Into::into).collect(),
+            plugin_executor_threads: report
+                .plugin_executor_threads
+                .into_iter()
+                .map(Into::into)
+                .collect(),
         }
     }
 }
@@ -160,6 +176,7 @@ impl From<ProtobufMemoryDiagnostics> for MemoryDiagnostics {
             kitty_image_bytes: memory.kitty_image_bytes,
             kitty_image_count: memory.kitty_image_count,
             kitty_image_quota_bytes: memory.kitty_image_quota_bytes,
+            plugin_linear_memory_bytes: memory.plugin_linear_memory_bytes,
         }
     }
 }
@@ -175,6 +192,61 @@ impl From<MemoryDiagnostics> for ProtobufMemoryDiagnostics {
             kitty_image_bytes: memory.kitty_image_bytes,
             kitty_image_count: memory.kitty_image_count,
             kitty_image_quota_bytes: memory.kitty_image_quota_bytes,
+            plugin_linear_memory_bytes: memory.plugin_linear_memory_bytes,
+        }
+    }
+}
+
+impl From<ProtobufPluginDiagnostics> for PluginDiagnostics {
+    fn from(plugin: ProtobufPluginDiagnostics) -> Self {
+        PluginDiagnostics {
+            plugin_id: plugin.plugin_id,
+            location: plugin.location,
+            is_shared: plugin.is_shared,
+            slot_ids: plugin.slot_ids,
+            instances: plugin.instances,
+            workers: plugin.workers,
+            linear_memory_bytes: plugin.linear_memory_bytes,
+            largest_linear_memory_bytes: plugin.largest_linear_memory_bytes,
+            linear_memory_limit_bytes: plugin.linear_memory_limit_bytes,
+            executor_thread: plugin.executor_thread,
+        }
+    }
+}
+
+impl From<PluginDiagnostics> for ProtobufPluginDiagnostics {
+    fn from(plugin: PluginDiagnostics) -> Self {
+        ProtobufPluginDiagnostics {
+            plugin_id: plugin.plugin_id,
+            location: plugin.location,
+            is_shared: plugin.is_shared,
+            slot_ids: plugin.slot_ids,
+            instances: plugin.instances,
+            workers: plugin.workers,
+            linear_memory_bytes: plugin.linear_memory_bytes,
+            largest_linear_memory_bytes: plugin.largest_linear_memory_bytes,
+            linear_memory_limit_bytes: plugin.linear_memory_limit_bytes,
+            executor_thread: plugin.executor_thread,
+        }
+    }
+}
+
+impl From<ProtobufExecutorThreadDiagnostics> for ExecutorThreadDiagnostics {
+    fn from(thread: ProtobufExecutorThreadDiagnostics) -> Self {
+        ExecutorThreadDiagnostics {
+            index: thread.index,
+            jobs_in_flight: thread.jobs_in_flight,
+            plugin_ids: thread.plugin_ids,
+        }
+    }
+}
+
+impl From<ExecutorThreadDiagnostics> for ProtobufExecutorThreadDiagnostics {
+    fn from(thread: ExecutorThreadDiagnostics) -> Self {
+        ProtobufExecutorThreadDiagnostics {
+            index: thread.index,
+            jobs_in_flight: thread.jobs_in_flight,
+            plugin_ids: thread.plugin_ids,
         }
     }
 }
@@ -189,7 +261,7 @@ mod tests {
 
     fn sample_report() -> DiagnosticsReport {
         DiagnosticsReport {
-            sections: vec![DiagnosticsSection::Panes, DiagnosticsSection::Memory],
+            sections: DiagnosticsSection::ALL.to_vec(),
             unsupported_sections: vec![],
             memory: Some(MemoryDiagnostics {
                 process_rss_bytes: Some(212 * 1024 * 1024),
@@ -200,7 +272,46 @@ mod tests {
                 kitty_image_bytes: 18 * 1024 * 1024,
                 kitty_image_count: 3,
                 kitty_image_quota_bytes: 320 * 1024 * 1024,
+                plugin_linear_memory_bytes: 9 * 1024 * 1024,
             }),
+            plugins: vec![
+                PluginDiagnostics {
+                    plugin_id: 2,
+                    location: "zellij:status-bar".to_string(),
+                    is_shared: false,
+                    slot_ids: vec![],
+                    instances: 2,
+                    workers: 1,
+                    linear_memory_bytes: 6 * 1024 * 1024,
+                    largest_linear_memory_bytes: 3 * 1024 * 1024,
+                    linear_memory_limit_bytes: 16 * 1024 * 1024,
+                    executor_thread: Some(1),
+                },
+                PluginDiagnostics {
+                    plugin_id: 7,
+                    location: "file:/plugins/bars.wasm".to_string(),
+                    is_shared: true,
+                    slot_ids: vec![8, 9],
+                    instances: 1,
+                    workers: 0,
+                    linear_memory_bytes: 3 * 1024 * 1024,
+                    largest_linear_memory_bytes: 3 * 1024 * 1024,
+                    linear_memory_limit_bytes: 16 * 1024 * 1024,
+                    executor_thread: None,
+                },
+            ],
+            plugin_executor_threads: vec![
+                ExecutorThreadDiagnostics {
+                    index: 0,
+                    jobs_in_flight: 0,
+                    plugin_ids: vec![],
+                },
+                ExecutorThreadDiagnostics {
+                    index: 1,
+                    jobs_in_flight: 3,
+                    plugin_ids: vec![2, 5],
+                },
+            ],
             panes: vec![
                 PaneDiagnostics {
                     pane_id: PaneId::Terminal(3),

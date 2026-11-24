@@ -6652,6 +6652,7 @@ dependencies = [
  "url",
  "uuid",
  "wasmi",
+ "wasmi_core",
  "wasmi_wasi",
  "windows-sys 0.59.0",
  "zellij-utils",

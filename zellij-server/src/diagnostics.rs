@@ -4,13 +4,17 @@
 //! owns, → plugin thread, which adds what it owns and delivers the report.
 //! Nothing here runs unless someone asks for a report.
 
+use std::collections::BTreeMap;
+
 use zellij_utils::data::{ClientId, PaneId};
-use zellij_utils::diagnostics::{MemoryDiagnostics, PaneDiagnostics};
+use zellij_utils::diagnostics::{
+    ExecutorThreadDiagnostics, MemoryDiagnostics, PaneDiagnostics, PluginDiagnostics,
+};
 
 use crate::panes::cluster_table;
 use crate::panes::kitty_graphics::KittyImageStore;
 use crate::panes::PaneId as ServerPaneId;
-use crate::plugins::PluginId;
+use crate::plugins::{PluginId, PluginLinearMemory};
 use crate::tab::{Pane, Tab};
 
 /// Where a finished report goes.
@@ -80,7 +84,46 @@ pub(crate) fn collect_memory<'a>(
         kitty_image_bytes: kitty_images.total_bytes() as u64,
         kitty_image_count: kitty_images.image_count() as u64,
         kitty_image_quota_bytes: kitty_images.quota_bytes() as u64,
+        plugin_linear_memory_bytes: 0,
     }
+}
+
+/// Who a plugin is, for its row in the Plugins section.
+pub(crate) struct PluginIdentity {
+    pub location: String,
+    /// `Some` for a shared plugin: the slots its one instance serves.
+    pub shared_slots: Option<Vec<u32>>,
+}
+
+/// One row per plugin, ordered by id. Runs on the plugin thread.
+pub(crate) fn collect_plugins(
+    identities: BTreeMap<PluginId, PluginIdentity>,
+    linear_memory: &BTreeMap<PluginId, PluginLinearMemory>,
+    executor_threads: &[ExecutorThreadDiagnostics],
+    linear_memory_limit_bytes: u64,
+) -> Vec<PluginDiagnostics> {
+    let executor_thread_of: BTreeMap<u32, u32> = executor_threads
+        .iter()
+        .flat_map(|thread| thread.plugin_ids.iter().map(|id| (*id, thread.index)))
+        .collect();
+    identities
+        .into_iter()
+        .map(|(plugin_id, identity)| {
+            let memory = linear_memory.get(&plugin_id).cloned().unwrap_or_default();
+            PluginDiagnostics {
+                plugin_id,
+                location: identity.location,
+                is_shared: identity.shared_slots.is_some(),
+                slot_ids: identity.shared_slots.unwrap_or_default(),
+                instances: memory.instances,
+                workers: memory.workers,
+                linear_memory_bytes: memory.total_bytes,
+                largest_linear_memory_bytes: memory.largest_bytes,
+                linear_memory_limit_bytes,
+                executor_thread: executor_thread_of.get(&plugin_id).copied(),
+            }
+        })
+        .collect()
 }
 
 /// Resident memory of this process. A targeted refresh of our own PID, but
@@ -100,6 +143,58 @@ pub(crate) fn process_rss_bytes() -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_rows_join_identity_memory_and_executor_thread() {
+        let mut identities = BTreeMap::new();
+        identities.insert(
+            4,
+            PluginIdentity {
+                location: "zellij:status-bar".to_string(),
+                shared_slots: None,
+            },
+        );
+        identities.insert(
+            9,
+            PluginIdentity {
+                location: "file:/plugins/bars.wasm".to_string(),
+                shared_slots: Some(vec![10, 11]),
+            },
+        );
+        let mut linear_memory = BTreeMap::new();
+        linear_memory.insert(
+            4,
+            PluginLinearMemory {
+                instances: 2,
+                workers: 1,
+                total_bytes: 3_000,
+                largest_bytes: 1_500,
+            },
+        );
+        let threads = vec![ExecutorThreadDiagnostics {
+            index: 1,
+            jobs_in_flight: 0,
+            plugin_ids: vec![4],
+        }];
+        let rows = collect_plugins(identities, &linear_memory, &threads, 16_000);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].plugin_id, 4);
+        assert_eq!((rows[0].instances, rows[0].workers), (2, 1));
+        assert_eq!(rows[0].linear_memory_bytes, 3_000);
+        assert_eq!(rows[0].largest_linear_memory_bytes, 1_500);
+        assert_eq!(rows[0].linear_memory_limit_bytes, 16_000);
+        assert_eq!(rows[0].executor_thread, Some(1));
+        assert!(!rows[0].is_shared);
+        assert!(rows[1].is_shared);
+        assert_eq!(rows[1].slot_ids, vec![10, 11]);
+        assert_eq!(
+            rows[1].instances, 0,
+            "no store yet: still loading, or failed to"
+        );
+        assert_eq!(rows[1].executor_thread, None);
+    }
+
     #[test]
     fn this_process_reports_its_memory() {
         let rss = super::process_rss_bytes().expect("the OS reports our memory");

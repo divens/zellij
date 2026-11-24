@@ -1,3 +1,6 @@
+use crate::plugins::linear_memory::{
+    LinearMemoryGauge, LinearMemoryGauges, PluginLinearMemory, StoreRole, TrackedStoreLimits,
+};
 use crate::plugins::plugin_worker::MessageToWorker;
 use crate::plugins::PluginId;
 use std::io::Write;
@@ -9,7 +12,7 @@ use std::{
         Arc, Mutex,
     },
 };
-use wasmi::{Instance, Store, StoreLimits};
+use wasmi::{Instance, Store};
 use wasmi_wasi::WasiCtx;
 
 use crate::{thread_bus::ThreadSenders, ClientId, SharedKeybinds};
@@ -53,6 +56,7 @@ pub struct PluginMap {
     plugin_metadata: HashMap<PluginId, PluginMetadata>,
     shared_assets: HashMap<PluginId, PluginAssets>,
     shared_blocking_calls: HashMap<PluginId, Arc<AtomicBool>>,
+    linear_memory: LinearMemoryGauges,
 }
 
 impl PluginMap {
@@ -320,6 +324,21 @@ impl PluginMap {
                 initial_cwd: metadata.plugin_config.initial_cwd.clone(),
             })
     }
+    /// Every store of `plugin_id`'s instances and workers registers here
+    /// once, when it is created.
+    pub fn register_linear_memory(
+        &mut self,
+        plugin_id: PluginId,
+        role: StoreRole,
+        gauge: LinearMemoryGauge,
+    ) {
+        self.linear_memory.register(plugin_id, role, gauge);
+    }
+    /// Linear memory of every plugin with a live store. For a shared plugin,
+    /// keyed by its instance id.
+    pub fn linear_memory_by_plugin(&mut self) -> BTreeMap<PluginId, PluginLinearMemory> {
+        self.linear_memory.by_plugin()
+    }
     pub fn list_plugins(&self) -> BTreeMap<PluginId, RunPlugin> {
         let mut plugin_ids_to_cmds: BTreeMap<u32, RunPlugin> = BTreeMap::new();
         for plugin_id in self.plugin_metadata.keys() {
@@ -361,7 +380,7 @@ pub struct PluginEnv {
     pub keybinds: SharedKeybinds,
     pub intercepting_key_presses: bool,
     pub pending_popup_size: Option<(usize, usize)>,
-    pub store_limits: StoreLimits,
+    pub store_limits: TrackedStoreLimits,
     pub shared: Option<SharedEnv>,
 }
 
