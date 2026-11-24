@@ -19,7 +19,8 @@ use std::convert::TryFrom;
 
 /// Wire numbers this build doesn't know become `Unknown`, so a server can
 /// report them back as unsupported and a peer can encode them unchanged.
-fn decode_section(value: i32) -> DiagnosticsSection {
+/// The CLI's `dump-diagnostics` action uses the same numbers.
+pub fn decode_section(value: i32) -> DiagnosticsSection {
     match ProtobufDiagnosticsSection::try_from(value) {
         Ok(ProtobufDiagnosticsSection::Panes) => DiagnosticsSection::Panes,
         Ok(ProtobufDiagnosticsSection::Memory) => DiagnosticsSection::Memory,
@@ -30,7 +31,7 @@ fn decode_section(value: i32) -> DiagnosticsSection {
     }
 }
 
-fn encode_section(section: DiagnosticsSection) -> i32 {
+pub fn encode_section(section: DiagnosticsSection) -> i32 {
     match section {
         DiagnosticsSection::Panes => ProtobufDiagnosticsSection::Panes as i32,
         DiagnosticsSection::Memory => ProtobufDiagnosticsSection::Memory as i32,

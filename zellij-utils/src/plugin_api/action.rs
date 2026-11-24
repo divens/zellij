@@ -2639,6 +2639,7 @@ impl TryFrom<Action> for ProtobufAction {
             | Action::DumpLayout
             | Action::CliPipe { .. }
             | Action::ListClients
+            | Action::DumpDiagnostics { .. }
             | Action::ListPanes { .. }
             | Action::WaitForPaneExit { .. }
             | Action::StackPanes { pane_ids: _ }

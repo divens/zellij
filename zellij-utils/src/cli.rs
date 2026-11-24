@@ -28,6 +28,20 @@ const CLI_STYLES: Styles = Styles::styled()
     .valid(ansi(AnsiColor::Green))
     .invalid(ansi(AnsiColor::Yellow));
 
+fn parse_diagnostics_section(name: &str) -> Result<crate::diagnostics::DiagnosticsSection, String> {
+    use crate::diagnostics::DiagnosticsSection;
+    DiagnosticsSection::from_name(name).ok_or_else(|| {
+        let known: Vec<String> = DiagnosticsSection::ALL
+            .iter()
+            .map(|section| section.name())
+            .collect();
+        format!(
+            "unknown section '{name}', expected one of: {}",
+            known.join(", ")
+        )
+    })
+}
+
 fn validate_session(name: &str) -> Result<String, String> {
     // Socket paths are named by a fixed-length session id, not the session name,
     // so the name no longer contributes to the socket-path length limit. The
@@ -2086,6 +2100,25 @@ tail -f /tmp/my-live-logfile | zellij action pipe --name logs --plugin https://e
         popup_outside_click: Option<crate::data::OutsideClick>,
     },
     ListClients,
+    /// Report the session's diagnostics: scrollback and memory, plugins,
+    /// queues and clients
+    ///
+    /// Returns: A text summary, or the full report as JSON, to stdout.
+    /// Attach `--json` output to bug reports.
+    DumpDiagnostics {
+        /// Only these sections, comma-separated: panes, memory, plugins,
+        /// queues, clients. All of them by default
+        #[clap(
+            long,
+            value_delimiter = ',',
+            value_parser = parse_diagnostics_section
+        )]
+        sections: Vec<crate::diagnostics::DiagnosticsSection>,
+
+        /// Output the full report as JSON
+        #[clap(short, long, value_parser)]
+        json: bool,
+    },
     /// List all panes in the current session
     ///
     /// Returns: Formatted list of panes (table or JSON) to stdout
@@ -2395,6 +2428,41 @@ mod tests {
             Some(Command::Subscribe(s)) => s,
             other => panic!("Expected Subscribe, got {:?}", other),
         }
+    }
+
+    fn parse_dump_diagnostics(args: &[&str]) -> Result<CliAction, clap::Error> {
+        let mut full_args = vec!["action", "dump-diagnostics"];
+        full_args.extend(args);
+        match try_parse(&full_args)?.command {
+            Some(Command::Action(action)) => Ok(*action),
+            other => panic!("Expected an action, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn dump_diagnostics_takes_section_names() {
+        use crate::diagnostics::DiagnosticsSection;
+        match parse_dump_diagnostics(&["--sections", "Panes,clients", "--json"]).unwrap() {
+            CliAction::DumpDiagnostics { sections, json } => {
+                assert_eq!(
+                    sections,
+                    vec![DiagnosticsSection::Panes, DiagnosticsSection::Clients]
+                );
+                assert!(json);
+            },
+            other => panic!("Expected DumpDiagnostics, got {:?}", other),
+        }
+        match parse_dump_diagnostics(&[]).unwrap() {
+            CliAction::DumpDiagnostics { sections, json } => {
+                assert!(sections.is_empty(), "all sections by default");
+                assert!(!json);
+            },
+            other => panic!("Expected DumpDiagnostics, got {:?}", other),
+        }
+        let error = parse_dump_diagnostics(&["--sections", "threads"])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("expected one of: panes, memory"), "{error}");
     }
 
     #[test]

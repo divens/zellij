@@ -630,6 +630,12 @@ pub enum Action {
         pane_title: Option<String>,
     },
     ListClients,
+    /// The session's diagnostics report, as text or JSON, for the CLI.
+    DumpDiagnostics {
+        /// Empty means every section.
+        sections: Vec<crate::diagnostics::DiagnosticsSection>,
+        output_json: bool,
+    },
     ListPanes {
         show_tab: bool,
         show_command: bool,
@@ -2262,6 +2268,10 @@ impl Action {
                 }])
             },
             CliAction::ListClients => Ok(vec![Action::ListClients]),
+            CliAction::DumpDiagnostics { sections, json } => Ok(vec![Action::DumpDiagnostics {
+                sections,
+                output_json: json,
+            }]),
             CliAction::ListPanes {
                 tab,
                 command,

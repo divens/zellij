@@ -4945,6 +4945,25 @@ fn assert_action_wire_roundtrip(action: Action) {
 }
 
 #[test]
+fn dump_diagnostics_wire_roundtrip() {
+    use crate::diagnostics::DiagnosticsSection;
+    assert_action_wire_roundtrip(Action::DumpDiagnostics {
+        sections: vec![],
+        output_json: false,
+    });
+    assert_action_wire_roundtrip(Action::DumpDiagnostics {
+        sections: vec![DiagnosticsSection::Clients, DiagnosticsSection::Panes],
+        output_json: true,
+    });
+    // A section a newer CLI knows keeps its number, so the server can say it
+    // doesn't support it.
+    assert_action_wire_roundtrip(Action::DumpDiagnostics {
+        sections: vec![DiagnosticsSection::Unknown(42)],
+        output_json: true,
+    });
+}
+
+#[test]
 fn set_resurrect_command_wire_roundtrip() {
     assert_action_wire_roundtrip(Action::SetResurrectCommand {
         pane_id: PaneId::Terminal(3),

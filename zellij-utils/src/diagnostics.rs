@@ -41,6 +41,26 @@ impl DiagnosticsSection {
     pub fn is_known(self) -> bool {
         !matches!(self, DiagnosticsSection::Unknown(_))
     }
+
+    /// The name used on the command line and in text output: `panes`.
+    pub fn name(self) -> String {
+        match self {
+            DiagnosticsSection::Panes => "panes".to_string(),
+            DiagnosticsSection::Memory => "memory".to_string(),
+            DiagnosticsSection::Plugins => "plugins".to_string(),
+            DiagnosticsSection::Queues => "queues".to_string(),
+            DiagnosticsSection::Clients => "clients".to_string(),
+            DiagnosticsSection::Unknown(number) => format!("section {number}"),
+        }
+    }
+
+    /// A known section by its `name`, ignoring case.
+    pub fn from_name(name: &str) -> Option<Self> {
+        DiagnosticsSection::ALL
+            .iter()
+            .copied()
+            .find(|section| section.name().eq_ignore_ascii_case(name.trim()))
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,6 +320,22 @@ mod tests {
         let request = DiagnosticsRequest::new(&[DiagnosticsSection::Unknown(9)]);
         assert!(request.resolved_sections().is_empty());
         assert!(!request.includes(DiagnosticsSection::Panes));
+    }
+
+    #[test]
+    fn sections_go_by_their_names() {
+        for section in DiagnosticsSection::ALL {
+            assert_eq!(
+                DiagnosticsSection::from_name(&section.name()),
+                Some(section)
+            );
+        }
+        assert_eq!(
+            DiagnosticsSection::from_name(" Memory "),
+            Some(DiagnosticsSection::Memory)
+        );
+        assert_eq!(DiagnosticsSection::from_name("threads"), None);
+        assert_eq!(DiagnosticsSection::Unknown(9).name(), "section 9");
     }
 
     #[test]

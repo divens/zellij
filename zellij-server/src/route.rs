@@ -2361,6 +2361,27 @@ fn route_action_with_origin(
                 ))
                 .with_context(err_context)?;
         },
+        Action::DumpDiagnostics {
+            sections,
+            output_json,
+        } => {
+            match request_diagnostics_from_screen(&senders, &sections).with_context(err_context)? {
+                Some(report) => {
+                    let output_lines = if output_json {
+                        crate::diagnostics::format::as_json(&report)
+                    } else {
+                        crate::diagnostics::format::as_text(&report)
+                    };
+                    send_output_to_client(cli_client_id, os_input.as_ref(), output_lines);
+                },
+                None => send_error_to_client(
+                    cli_client_id,
+                    os_input.as_ref(),
+                    "Timed out waiting for the diagnostics report",
+                ),
+            }
+            drop(NotificationEnd::new(completion_tx));
+        },
         Action::ListPanes {
             show_tab,
             show_command,
@@ -3948,6 +3969,36 @@ pub(crate) fn route_thread_main(
         let _ = to_server.send(ServerInstruction::RemoveClient(client_id));
     }
     Ok(())
+}
+
+/// How long `dump-diagnostics` waits: the report passes through the screen
+/// thread, then the plugin thread, and either may be busy.
+const DIAGNOSTICS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The diagnostics report for `sections`, by the same path as a plugin's
+/// `request_diagnostics`: the screen thread, then the plugin thread.
+fn request_diagnostics_from_screen(
+    senders: &ThreadSenders,
+    sections: &[zellij_utils::diagnostics::DiagnosticsSection],
+) -> Result<Option<zellij_utils::diagnostics::DiagnosticsReport>> {
+    use crossbeam::channel::{bounded, RecvTimeoutError};
+
+    let (response_sender, response_receiver) = bounded(1);
+    senders.send_to_screen(ScreenInstruction::RequestDiagnostics(
+        zellij_utils::diagnostics::DiagnosticsRequest::new(sections),
+        crate::diagnostics::DiagnosticsReplyTo::Channel(response_sender),
+    ))?;
+    match response_receiver.recv_timeout(DIAGNOSTICS_TIMEOUT) {
+        Ok(report) => Ok(Some(report)),
+        Err(RecvTimeoutError::Timeout) => {
+            log::error!("Timed out waiting for a diagnostics report");
+            Ok(None)
+        },
+        Err(RecvTimeoutError::Disconnected) => {
+            log::error!("The diagnostics report was dropped on its way");
+            Ok(None)
+        },
+    }
 }
 
 fn request_panes_from_screen(

@@ -4,14 +4,16 @@
 //! owns, → plugin thread, which adds what it owns and delivers the report.
 //! Nothing here runs unless someone asks for a report.
 
+pub(crate) mod format;
+
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 use zellij_utils::channels::SenderWithContext;
 use zellij_utils::data::{ClientId, PaneId};
 use zellij_utils::diagnostics::{
-    ClientDiagnostics, ClientKind, ExecutorThreadDiagnostics, MemoryDiagnostics, PaneDiagnostics,
-    PluginDiagnostics, QueueDiagnostics,
+    ClientDiagnostics, ClientKind, DiagnosticsReport, ExecutorThreadDiagnostics, MemoryDiagnostics,
+    PaneDiagnostics, PluginDiagnostics, QueueDiagnostics,
 };
 
 use crate::panes::cluster_table;
@@ -23,7 +25,7 @@ use crate::tab::{Pane, Tab};
 use crate::thread_bus::Bus;
 
 /// Where a finished report goes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum DiagnosticsReplyTo {
     /// The plugin that called `request_diagnostics`, for the client it acted
     /// for.
@@ -31,6 +33,9 @@ pub enum DiagnosticsReplyTo {
         plugin_id: PluginId,
         client_id: ClientId,
     },
+    /// A caller waiting on the other end, such as the connection running
+    /// `zellij action dump-diagnostics`.
+    Channel(crossbeam::channel::Sender<DiagnosticsReport>),
 }
 
 /// Every pane of a tab: tiled, floating and suppressed.

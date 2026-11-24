@@ -1134,6 +1134,10 @@ pub(crate) fn plugin_thread_main(
                             vec![(Some(plugin_id), Some(client_id), Event::Diagnostics(report))];
                         wasm_bridge.update_plugins(updates, shutdown_send.clone())?;
                     },
+                    DiagnosticsReplyTo::Channel(sender) => {
+                        // The caller may have given up waiting.
+                        let _ = sender.send(report);
+                    },
                 }
             },
             PluginInstruction::LogLayoutToHd(mut session_layout_metadata) => {

@@ -1532,6 +1532,7 @@ impl From<crate::input::actions::Action>
             DenyAction,
             DetachAction,
             DismissInfoPopupsAction,
+            DumpDiagnosticsAction,
             DumpLayoutAction,
             DumpScreenAction,
             EditFileAction,
@@ -2533,6 +2534,16 @@ impl From<crate::input::actions::Action>
             crate::input::actions::Action::ListClients => {
                 ActionType::ListClients(ListClientsAction {})
             },
+            crate::input::actions::Action::DumpDiagnostics {
+                sections,
+                output_json,
+            } => ActionType::DumpDiagnostics(DumpDiagnosticsAction {
+                sections: sections
+                    .into_iter()
+                    .map(crate::plugin_api::diagnostics::encode_section)
+                    .collect(),
+                output_json,
+            }),
             crate::input::actions::Action::ListPanes {
                 show_tab,
                 show_command,
@@ -3635,6 +3646,16 @@ impl TryFrom<crate::client_server_contract::client_server_contract::Action>
                 })
             },
             ActionType::ListClients(_) => Ok(crate::input::actions::Action::ListClients),
+            ActionType::DumpDiagnostics(dump_diagnostics_action) => {
+                Ok(crate::input::actions::Action::DumpDiagnostics {
+                    sections: dump_diagnostics_action
+                        .sections
+                        .into_iter()
+                        .map(crate::plugin_api::diagnostics::decode_section)
+                        .collect(),
+                    output_json: dump_diagnostics_action.output_json,
+                })
+            },
             ActionType::ListPanes(list_panes_action) => {
                 Ok(crate::input::actions::Action::ListPanes {
                     show_tab: list_panes_action.show_tab,

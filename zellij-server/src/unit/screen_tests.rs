@@ -21221,7 +21221,10 @@ fn diagnostics_forwarded_for(
     };
     let _ = mock_screen
         .to_screen
-        .send(ScreenInstruction::RequestDiagnostics(request, reply_to));
+        .send(ScreenInstruction::RequestDiagnostics(
+            request,
+            reply_to.clone(),
+        ));
     std::thread::sleep(std::time::Duration::from_millis(100));
     mock_screen.teardown(vec![plugin_thread, screen_thread]);
     let delivered = received_plugin_instructions
@@ -21229,11 +21232,20 @@ fn diagnostics_forwarded_for(
         .unwrap()
         .iter()
         .find_map(|instruction| match instruction {
-            PluginInstruction::DeliverDiagnostics(report, to) => Some((report.clone(), *to)),
+            PluginInstruction::DeliverDiagnostics(report, to) => Some((report.clone(), to.clone())),
             _ => None,
         });
     let (report, to) = delivered.expect("the screen forwarded a diagnostics report");
-    assert_eq!(to, reply_to);
+    assert!(
+        matches!(
+            to,
+            DiagnosticsReplyTo::Plugin {
+                plugin_id: 7,
+                client_id: 1
+            }
+        ),
+        "{to:?}"
+    );
     (report, to)
 }
 

@@ -9729,6 +9729,40 @@ pub fn diagnostics_are_delivered_to_the_requesting_plugin() {
     assert!(rendered_the_report, "the fixture never received the report");
 }
 
+#[test]
+pub fn a_report_for_a_waiting_caller_is_filled_in_and_sent_back() {
+    use crate::diagnostics::DiagnosticsReplyTo;
+    use zellij_utils::diagnostics::{DiagnosticsReport, DiagnosticsSection, MemoryDiagnostics};
+    let temp_folder = tempdir().unwrap(); // placed explicitly in the test scope because its
+                                          // destructor removes the directory
+    let (plugin_thread_sender, _screen_receiver, teardown) =
+        create_plugin_thread(Some(PathBuf::from(temp_folder.path())), None);
+    let (sender, receiver) = crossbeam::channel::bounded(1);
+    let report = DiagnosticsReport {
+        sections: vec![DiagnosticsSection::Memory, DiagnosticsSection::Plugins],
+        memory: Some(MemoryDiagnostics::default()),
+        ..Default::default()
+    };
+    let _ = plugin_thread_sender.send(PluginInstruction::DeliverDiagnostics(
+        report,
+        DiagnosticsReplyTo::Channel(sender),
+    ));
+    let delivered = receiver
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the plugin thread answers the caller");
+    teardown();
+    let memory = delivered.memory.expect("the Memory section stays");
+    assert!(
+        memory.process_rss_bytes.is_some(),
+        "the plugin thread adds the process's memory"
+    );
+    assert!(
+        delivered.plugins.is_empty(),
+        "no plugin is loaded: {:?}",
+        delivered.plugins
+    );
+}
+
 /// The number right after `label` in `text`, as the fixture prints a report.
 fn number_after(text: &str, label: &str) -> Option<u64> {
     let start = text.find(label)? + label.len();

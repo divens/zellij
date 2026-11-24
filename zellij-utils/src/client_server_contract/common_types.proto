@@ -359,6 +359,7 @@ message Action {
     PasteFromClipboardByPaneIdAction paste_from_clipboard_by_pane_id = 193;
     ToggleStackListOrientationAction toggle_stack_list_orientation = 194;
     ToggleStackListOrientationByPaneIdAction toggle_stack_list_orientation_by_pane_id = 195;
+    DumpDiagnosticsAction dump_diagnostics = 196;
   }
 }
 
@@ -452,6 +453,12 @@ message BreakPaneAction {}
 message BreakPaneRightAction {}
 message BreakPaneLeftAction {}
 message ListClientsAction {}
+message DumpDiagnosticsAction {
+  // Section wire numbers, as in plugin_api/diagnostics.proto. Empty means
+  // every section.
+  repeated int32 sections = 1;
+  bool output_json = 2;
+}
 message ListPanesAction {
   bool show_tab = 1;
   bool show_command = 2;
