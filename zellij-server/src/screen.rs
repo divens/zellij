@@ -3799,6 +3799,7 @@ impl Screen {
         if state.in_flight != Some(seq) {
             return Ok(());
         }
+        state.last_ack_rtt = state.in_flight_since.map(|since| since.elapsed());
         state.disarm();
         if state.overlay.is_dirty() {
             let next_seq = state.allocate_seq();
@@ -7131,6 +7132,45 @@ impl Screen {
             .send_to_plugin(PluginInstruction::Update(updates))
             .context("failed to update plugin visibility")
             .non_fatal();
+    }
+
+    /// What the screen knows about every client, including connections that
+    /// only have an output buffer (CLI ones), for the Clients diagnostics
+    /// section.
+    pub(crate) fn client_observations(&self) -> BTreeMap<ClientId, diagnostics::ClientObservation> {
+        let mut clients: BTreeMap<ClientId, diagnostics::ClientObservation> = BTreeMap::new();
+        let backlogs = self
+            .bus
+            .os_input
+            .as_ref()
+            .map(|os_input| os_input.client_output_backlogs())
+            .unwrap_or_default();
+        for (client_id, backlog) in backlogs {
+            clients.entry(client_id).or_default().output_backlog = Some(backlog);
+        }
+        for (client_id, is_web_client) in self.connected_clients.borrow().iter() {
+            clients.entry(*client_id).or_default().attached_as_web = Some(*is_web_client);
+        }
+        for client_id in self.watcher_clients.keys() {
+            clients.entry(*client_id).or_default().is_watcher = true;
+        }
+        for (client_id, host_terminal_env) in &self.client_host_terminal_env {
+            if let Some(client) = clients.get_mut(client_id) {
+                client.in_desktop_window = host_terminal_env
+                    .contains_key(zellij_utils::input::cli_assets::DESKTOP_TERMINAL_ENV_KEY);
+            }
+        }
+        for (client_id, state) in self.structured_render_clients.borrow().iter() {
+            if let Some(client) = clients.get_mut(client_id) {
+                client.structured_frames = state.enabled;
+                client.last_frame_ack = state.last_ack_rtt;
+                client.frame_awaiting_ack = state
+                    .in_flight
+                    .and(state.in_flight_since)
+                    .map(|since| since.elapsed());
+            }
+        }
+        clients
     }
 
     pub fn add_watcher_client(&mut self, client_id: ClientId) -> Result<()> {
@@ -12193,6 +12233,12 @@ pub(crate) fn screen_thread_main(
                 }
                 if request.includes(DiagnosticsSection::Queues) {
                     report.queues = diagnostics::collect_queues(&screen.bus);
+                }
+                if request.includes(DiagnosticsSection::Clients) {
+                    report.clients = diagnostics::collect_clients(
+                        screen.client_observations(),
+                        crate::os_input_output::CLIENT_BUFFER_LIMIT,
+                    );
                 }
                 screen
                     .bus

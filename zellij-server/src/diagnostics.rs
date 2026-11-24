@@ -5,12 +5,13 @@
 //! Nothing here runs unless someone asks for a report.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use zellij_utils::channels::SenderWithContext;
 use zellij_utils::data::{ClientId, PaneId};
 use zellij_utils::diagnostics::{
-    ExecutorThreadDiagnostics, MemoryDiagnostics, PaneDiagnostics, PluginDiagnostics,
-    QueueDiagnostics,
+    ClientDiagnostics, ClientKind, ExecutorThreadDiagnostics, MemoryDiagnostics, PaneDiagnostics,
+    PluginDiagnostics, QueueDiagnostics,
 };
 
 use crate::panes::cluster_table;
@@ -90,6 +91,54 @@ pub(crate) fn collect_memory<'a>(
         kitty_image_quota_bytes: kitty_images.quota_bytes() as u64,
         plugin_linear_memory_bytes: 0,
     }
+}
+
+/// What the screen thread knows about one client, for the Clients section.
+#[derive(Debug, Default)]
+pub(crate) struct ClientObservation {
+    /// `Some(is_web_client)` for an attached client.
+    pub attached_as_web: Option<bool>,
+    pub is_watcher: bool,
+    /// It reported `ZELLIJ_DESKTOP_TERMINAL` in its host environment.
+    pub in_desktop_window: bool,
+    pub structured_frames: bool,
+    pub last_frame_ack: Option<Duration>,
+    pub frame_awaiting_ack: Option<Duration>,
+    pub output_backlog: Option<usize>,
+}
+
+fn client_kind(client: &ClientObservation) -> ClientKind {
+    if client.is_watcher {
+        return ClientKind::Watcher;
+    }
+    match client.attached_as_web {
+        Some(true) => ClientKind::WebBrowser,
+        Some(false) if client.in_desktop_window => ClientKind::DesktopWindow,
+        Some(false) => ClientKind::Terminal,
+        // Registered (it has an output buffer) but neither attached nor
+        // watching.
+        None => ClientKind::Cli,
+    }
+}
+
+/// One row per client, ordered by id.
+pub(crate) fn collect_clients(
+    clients: BTreeMap<ClientId, ClientObservation>,
+    output_backlog_limit: usize,
+) -> Vec<ClientDiagnostics> {
+    let micros = |duration: Duration| duration.as_micros().min(u64::MAX as u128) as u64;
+    clients
+        .into_iter()
+        .map(|(client_id, client)| ClientDiagnostics {
+            client_id,
+            kind: client_kind(&client),
+            structured_frames: client.structured_frames,
+            output_backlog: client.output_backlog.map(|backlog| backlog as u64),
+            output_backlog_limit: output_backlog_limit as u64,
+            last_frame_ack_us: client.last_frame_ack.map(micros),
+            frame_awaiting_ack_us: client.frame_awaiting_ack.map(micros),
+        })
+        .collect()
 }
 
 /// The screen's receivers, in the order `screen_bus` is built with in
@@ -244,6 +293,60 @@ mod tests {
             "no store yet: still loading, or failed to"
         );
         assert_eq!(rows[1].executor_thread, None);
+    }
+
+    #[test]
+    fn clients_are_told_apart_by_how_they_connected() {
+        let mut clients = BTreeMap::new();
+        let attached = |is_web| ClientObservation {
+            attached_as_web: Some(is_web),
+            ..Default::default()
+        };
+        clients.insert(1, attached(false));
+        clients.insert(
+            2,
+            ClientObservation {
+                in_desktop_window: true,
+                structured_frames: true,
+                last_frame_ack: Some(Duration::from_micros(1_850)),
+                frame_awaiting_ack: Some(Duration::from_millis(3)),
+                output_backlog: Some(4),
+                ..attached(false)
+            },
+        );
+        clients.insert(3, attached(true));
+        clients.insert(
+            4,
+            ClientObservation {
+                is_watcher: true,
+                ..Default::default()
+            },
+        );
+        clients.insert(
+            5,
+            ClientObservation {
+                output_backlog: Some(0),
+                ..Default::default()
+            },
+        );
+        let rows = collect_clients(clients, 5_000);
+        let kinds: Vec<ClientKind> = rows.iter().map(|row| row.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ClientKind::Terminal,
+                ClientKind::DesktopWindow,
+                ClientKind::WebBrowser,
+                ClientKind::Watcher,
+                ClientKind::Cli,
+            ]
+        );
+        assert_eq!(rows[1].output_backlog, Some(4));
+        assert_eq!(rows[1].output_backlog_limit, 5_000);
+        assert_eq!(rows[1].last_frame_ack_us, Some(1_850));
+        assert_eq!(rows[1].frame_awaiting_ack_us, Some(3_000));
+        assert!(rows[1].structured_frames && !rows[0].structured_frames);
+        assert_eq!(rows[0].output_backlog, None, "no buffer was seen for it");
     }
 
     #[test]

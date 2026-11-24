@@ -5,7 +5,7 @@
 //! when read, so several consumers can poll independently and compute rates
 //! from the difference between two reports.
 
-use crate::data::PaneId;
+use crate::data::{ClientId, PaneId};
 use serde::{Deserialize, Serialize};
 
 /// A part of the diagnostics report.
@@ -20,6 +20,8 @@ pub enum DiagnosticsSection {
     Plugins,
     /// Messages waiting for each of the server's core threads.
     Queues,
+    /// Every connection: what kind of client it is and its output backlog.
+    Clients,
     /// A section this build doesn't know, by its wire number. It appears when
     /// a newer peer names a section, so a report can say which sections it
     /// could not fill in. Never request it.
@@ -28,11 +30,12 @@ pub enum DiagnosticsSection {
 
 impl DiagnosticsSection {
     /// Every section this build knows, in report order.
-    pub const ALL: [DiagnosticsSection; 4] = [
+    pub const ALL: [DiagnosticsSection; 5] = [
         DiagnosticsSection::Panes,
         DiagnosticsSection::Memory,
         DiagnosticsSection::Plugins,
         DiagnosticsSection::Queues,
+        DiagnosticsSection::Clients,
     ];
 
     pub fn is_known(self) -> bool {
@@ -102,6 +105,8 @@ pub struct DiagnosticsReport {
     /// `plugins`.
     pub plugin_executor_threads: Vec<ExecutorThreadDiagnostics>,
     pub queues: Vec<QueueDiagnostics>,
+    /// Ordered by client id.
+    pub clients: Vec<ClientDiagnostics>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +156,47 @@ pub struct PluginDiagnostics {
     pub linear_memory_limit_bytes: u64,
     /// The executor thread the plugin runs on.
     pub executor_thread: Option<u32>,
+}
+
+/// What a client is, pieced together from how it connected.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClientKind {
+    /// A terminal running `zellij attach`.
+    #[default]
+    Terminal,
+    /// The `zellij terminal` desktop window.
+    DesktopWindow,
+    /// A browser, through the web server.
+    WebBrowser,
+    /// A read-only watcher.
+    Watcher,
+    /// A connection that never attaches, such as `zellij action` or
+    /// `zellij subscribe`.
+    Cli,
+    /// A kind this build doesn't know, by its wire number.
+    Unknown(i32),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientDiagnostics {
+    /// As in `list_clients`.
+    pub client_id: ClientId,
+    pub kind: ClientKind,
+    /// Renders reach this client as structured frames, each acknowledged,
+    /// rather than as ANSI.
+    pub structured_frames: bool,
+    /// Messages waiting to be written to the client. `None` if the server
+    /// keeps no buffer for it.
+    pub output_backlog: Option<u64>,
+    /// The backlog at which the server gives up on the client and
+    /// disconnects it.
+    pub output_backlog_limit: u64,
+    /// Structured clients: how long the client took to acknowledge its last
+    /// frame, in microseconds.
+    pub last_frame_ack_us: Option<u64>,
+    /// Structured clients: how long the frame in flight has waited for its
+    /// acknowledgement, in microseconds. Renders to the client wait too.
+    pub frame_awaiting_ack_us: Option<u64>,
 }
 
 /// One of the server's message queues, at the moment the report was made.

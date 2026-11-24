@@ -24,6 +24,8 @@ pub struct DiagnosticsReport {
     pub plugin_executor_threads: ::prost::alloc::vec::Vec<ExecutorThreadDiagnostics>,
     #[prost(message, repeated, tag="7")]
     pub queues: ::prost::alloc::vec::Vec<QueueDiagnostics>,
+    #[prost(message, repeated, tag="8")]
+    pub clients: ::prost::alloc::vec::Vec<ClientDiagnostics>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -70,6 +72,25 @@ pub struct PluginDiagnostics {
     pub executor_thread: ::core::option::Option<u32>,
     #[prost(uint32, repeated, tag="10")]
     pub slot_ids: ::prost::alloc::vec::Vec<u32>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ClientDiagnostics {
+    #[prost(uint32, tag="1")]
+    pub client_id: u32,
+    /// Kept as a number so a kind this build doesn't know survives decoding.
+    #[prost(enumeration="ClientKind", tag="2")]
+    pub kind: i32,
+    #[prost(bool, tag="3")]
+    pub structured_frames: bool,
+    #[prost(uint64, optional, tag="4")]
+    pub output_backlog: ::core::option::Option<u64>,
+    #[prost(uint64, tag="5")]
+    pub output_backlog_limit: u64,
+    #[prost(uint64, optional, tag="6")]
+    pub last_frame_ack_us: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag="7")]
+    pub frame_awaiting_ack_us: ::core::option::Option<u64>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -139,6 +160,7 @@ pub enum DiagnosticsSection {
     Memory = 1,
     Plugins = 2,
     Queues = 3,
+    Clients = 4,
 }
 impl DiagnosticsSection {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -151,6 +173,7 @@ impl DiagnosticsSection {
             DiagnosticsSection::Memory => "Memory",
             DiagnosticsSection::Plugins => "Plugins",
             DiagnosticsSection::Queues => "Queues",
+            DiagnosticsSection::Clients => "Clients",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -160,6 +183,42 @@ impl DiagnosticsSection {
             "Memory" => Some(Self::Memory),
             "Plugins" => Some(Self::Plugins),
             "Queues" => Some(Self::Queues),
+            "Clients" => Some(Self::Clients),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ClientKind {
+    Terminal = 0,
+    DesktopWindow = 1,
+    WebBrowser = 2,
+    Watcher = 3,
+    Cli = 4,
+}
+impl ClientKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            ClientKind::Terminal => "Terminal",
+            ClientKind::DesktopWindow => "DesktopWindow",
+            ClientKind::WebBrowser => "WebBrowser",
+            ClientKind::Watcher => "Watcher",
+            ClientKind::Cli => "Cli",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "Terminal" => Some(Self::Terminal),
+            "DesktopWindow" => Some(Self::DesktopWindow),
+            "WebBrowser" => Some(Self::WebBrowser),
+            "Watcher" => Some(Self::Watcher),
+            "Cli" => Some(Self::Cli),
             _ => None,
         }
     }

@@ -229,7 +229,7 @@ fn build_command(
 // this client and we'll stop sending messages to it.
 // If the client ever becomes responsive again, we'll send one final "Buffer full" message so it
 // knows what happened.
-const CLIENT_BUFFER_LIMIT: usize = 5000;
+pub const CLIENT_BUFFER_LIMIT: usize = 5000;
 
 #[derive(Clone)]
 struct ClientBuffer {
@@ -257,6 +257,11 @@ fn client_buffer(limit: usize) -> (ClientBuffer, ClientBufferReceiver) {
 }
 
 impl ClientBuffer {
+    /// Messages waiting to be written to the client.
+    fn backlog(&self) -> usize {
+        self.queued.load(Ordering::Acquire)
+    }
+
     fn try_send(&self, msg: ServerToClientMsg) -> Result<(), TrySendError<ServerToClientMsg>> {
         if self.queued.fetch_add(1, Ordering::AcqRel) >= self.limit {
             self.queued.fetch_sub(1, Ordering::AcqRel);
@@ -410,6 +415,11 @@ pub trait ServerOsApi: Send + Sync {
         reply_stream: LocalSocketStream,
     ) -> Result<()>;
     fn remove_client(&mut self, client_id: ClientId) -> Result<()>;
+    /// Messages waiting to be written to each registered client, against
+    /// `CLIENT_BUFFER_LIMIT`. Test fakes don't buffer client output.
+    fn client_output_backlogs(&self) -> HashMap<ClientId, usize> {
+        HashMap::new()
+    }
     fn load_palette(&self) -> Palette;
     /// Returns the current working directory for a given pid
     fn get_cwd(&self, pid: u32) -> Option<PathBuf>;
@@ -566,6 +576,16 @@ impl ServerOsApi for ServerOsInputOutput {
             client_senders.remove(&client_id);
         }
         Ok(())
+    }
+
+    fn client_output_backlogs(&self) -> HashMap<ClientId, usize> {
+        let Ok(client_senders) = self.client_senders.lock() else {
+            return HashMap::new();
+        };
+        client_senders
+            .iter()
+            .map(|(client_id, sender)| (*client_id, sender.client_buffer_sender.backlog()))
+            .collect()
     }
 
     fn load_palette(&self) -> Palette {

@@ -345,6 +345,21 @@ fn client_buffer_refuses_messages_when_limit_is_reached() {
 }
 
 #[test]
+fn the_backlog_counts_messages_not_yet_written_to_the_client() {
+    let (buffer, receiver) = client_buffer(CLIENT_BUFFER_LIMIT);
+    let msg = || ServerToClientMsg::Exit {
+        exit_reason: ExitReason::Normal,
+    };
+    assert_eq!(buffer.backlog(), 0);
+    for _ in 0..3 {
+        buffer.try_send(msg()).unwrap();
+    }
+    assert_eq!(buffer.backlog(), 3);
+    assert!(receiver.recv().is_some());
+    assert_eq!(buffer.backlog(), 2);
+}
+
+#[test]
 fn client_buffer_reports_disconnect_when_receiver_is_gone() {
     let (buffer, receiver) = client_buffer(CLIENT_BUFFER_LIMIT);
     drop(receiver);

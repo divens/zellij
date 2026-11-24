@@ -21312,6 +21312,29 @@ pub fn the_memory_section_reports_the_shared_stores_against_their_limits() {
 }
 
 #[test]
+pub fn the_clients_section_lists_attached_clients() {
+    use zellij_utils::diagnostics::{ClientKind, DiagnosticsRequest, DiagnosticsSection};
+    let (report, _) =
+        diagnostics_forwarded_for(DiagnosticsRequest::new(&[DiagnosticsSection::Clients]));
+    assert_eq!(report.sections, vec![DiagnosticsSection::Clients]);
+    let client = report
+        .clients
+        .iter()
+        .find(|client| client.client_id == 1)
+        .expect("the mock screen's client is listed");
+    assert_eq!(client.kind, ClientKind::Terminal);
+    assert!(!client.structured_frames);
+    assert_eq!(
+        client.output_backlog, None,
+        "the fake OS API keeps no client buffers"
+    );
+    assert_eq!(
+        client.output_backlog_limit,
+        crate::os_input_output::CLIENT_BUFFER_LIMIT as u64
+    );
+}
+
+#[test]
 pub fn the_queues_section_covers_the_screen_and_the_threads_it_sends_to() {
     use zellij_utils::diagnostics::{DiagnosticsRequest, DiagnosticsSection};
     let (report, _) =

@@ -1,4 +1,5 @@
 pub use super::generated_api::api::diagnostics::{
+    ClientDiagnostics as ProtobufClientDiagnostics, ClientKind as ProtobufClientKind,
     DiagnosticsPaneId as ProtobufDiagnosticsPaneId, DiagnosticsReport as ProtobufDiagnosticsReport,
     DiagnosticsRequest as ProtobufDiagnosticsRequest,
     DiagnosticsSection as ProtobufDiagnosticsSection,
@@ -9,8 +10,9 @@ pub use super::generated_api::api::diagnostics::{
 };
 use crate::data::PaneId;
 use crate::diagnostics::{
-    DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection, ExecutorThreadDiagnostics,
-    GridDiagnostics, MemoryDiagnostics, PaneDiagnostics, PluginDiagnostics, QueueDiagnostics,
+    ClientDiagnostics, ClientKind, DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection,
+    ExecutorThreadDiagnostics, GridDiagnostics, MemoryDiagnostics, PaneDiagnostics,
+    PluginDiagnostics, QueueDiagnostics,
 };
 
 use std::convert::TryFrom;
@@ -23,6 +25,7 @@ fn decode_section(value: i32) -> DiagnosticsSection {
         Ok(ProtobufDiagnosticsSection::Memory) => DiagnosticsSection::Memory,
         Ok(ProtobufDiagnosticsSection::Plugins) => DiagnosticsSection::Plugins,
         Ok(ProtobufDiagnosticsSection::Queues) => DiagnosticsSection::Queues,
+        Ok(ProtobufDiagnosticsSection::Clients) => DiagnosticsSection::Clients,
         Err(_) => DiagnosticsSection::Unknown(value),
     }
 }
@@ -33,6 +36,7 @@ fn encode_section(section: DiagnosticsSection) -> i32 {
         DiagnosticsSection::Memory => ProtobufDiagnosticsSection::Memory as i32,
         DiagnosticsSection::Plugins => ProtobufDiagnosticsSection::Plugins as i32,
         DiagnosticsSection::Queues => ProtobufDiagnosticsSection::Queues as i32,
+        DiagnosticsSection::Clients => ProtobufDiagnosticsSection::Clients as i32,
         DiagnosticsSection::Unknown(value) => value,
     }
 }
@@ -86,6 +90,7 @@ impl TryFrom<ProtobufDiagnosticsReport> for DiagnosticsReport {
                 .map(Into::into)
                 .collect(),
             queues: report.queues.into_iter().map(Into::into).collect(),
+            clients: report.clients.into_iter().map(Into::into).collect(),
         })
     }
 }
@@ -104,6 +109,7 @@ impl From<DiagnosticsReport> for ProtobufDiagnosticsReport {
                 .map(Into::into)
                 .collect(),
             queues: report.queues.into_iter().map(Into::into).collect(),
+            clients: report.clients.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -236,6 +242,56 @@ impl From<PluginDiagnostics> for ProtobufPluginDiagnostics {
     }
 }
 
+fn decode_client_kind(value: i32) -> ClientKind {
+    match ProtobufClientKind::try_from(value) {
+        Ok(ProtobufClientKind::Terminal) => ClientKind::Terminal,
+        Ok(ProtobufClientKind::DesktopWindow) => ClientKind::DesktopWindow,
+        Ok(ProtobufClientKind::WebBrowser) => ClientKind::WebBrowser,
+        Ok(ProtobufClientKind::Watcher) => ClientKind::Watcher,
+        Ok(ProtobufClientKind::Cli) => ClientKind::Cli,
+        Err(_) => ClientKind::Unknown(value),
+    }
+}
+
+fn encode_client_kind(kind: ClientKind) -> i32 {
+    match kind {
+        ClientKind::Terminal => ProtobufClientKind::Terminal as i32,
+        ClientKind::DesktopWindow => ProtobufClientKind::DesktopWindow as i32,
+        ClientKind::WebBrowser => ProtobufClientKind::WebBrowser as i32,
+        ClientKind::Watcher => ProtobufClientKind::Watcher as i32,
+        ClientKind::Cli => ProtobufClientKind::Cli as i32,
+        ClientKind::Unknown(value) => value,
+    }
+}
+
+impl From<ProtobufClientDiagnostics> for ClientDiagnostics {
+    fn from(client: ProtobufClientDiagnostics) -> Self {
+        ClientDiagnostics {
+            client_id: client.client_id,
+            kind: decode_client_kind(client.kind),
+            structured_frames: client.structured_frames,
+            output_backlog: client.output_backlog,
+            output_backlog_limit: client.output_backlog_limit,
+            last_frame_ack_us: client.last_frame_ack_us,
+            frame_awaiting_ack_us: client.frame_awaiting_ack_us,
+        }
+    }
+}
+
+impl From<ClientDiagnostics> for ProtobufClientDiagnostics {
+    fn from(client: ClientDiagnostics) -> Self {
+        ProtobufClientDiagnostics {
+            client_id: client.client_id,
+            kind: encode_client_kind(client.kind),
+            structured_frames: client.structured_frames,
+            output_backlog: client.output_backlog,
+            output_backlog_limit: client.output_backlog_limit,
+            last_frame_ack_us: client.last_frame_ack_us,
+            frame_awaiting_ack_us: client.frame_awaiting_ack_us,
+        }
+    }
+}
+
 impl From<ProtobufQueueDiagnostics> for QueueDiagnostics {
     fn from(queue: ProtobufQueueDiagnostics) -> Self {
         QueueDiagnostics {
@@ -349,6 +405,24 @@ mod tests {
                     capacity: Some(50),
                 },
             ],
+            clients: vec![
+                ClientDiagnostics {
+                    client_id: 1,
+                    kind: ClientKind::DesktopWindow,
+                    structured_frames: true,
+                    output_backlog: Some(3),
+                    output_backlog_limit: 5_000,
+                    last_frame_ack_us: Some(1_850),
+                    frame_awaiting_ack_us: None,
+                },
+                ClientDiagnostics {
+                    client_id: 4,
+                    kind: ClientKind::Cli,
+                    output_backlog: None,
+                    output_backlog_limit: 5_000,
+                    ..Default::default()
+                },
+            ],
             panes: vec![
                 PaneDiagnostics {
                     pane_id: PaneId::Terminal(3),
@@ -440,6 +514,21 @@ mod tests {
         };
         let decoded = over_the_wire(report);
         assert_eq!(decoded.memory.unwrap().process_rss_bytes, None);
+    }
+
+    #[test]
+    fn a_client_kind_from_a_newer_server_keeps_its_number() {
+        let client = ProtobufClientDiagnostics {
+            client_id: 2,
+            kind: FUTURE_SECTION,
+            ..Default::default()
+        };
+        let decoded = ClientDiagnostics::from(client);
+        assert_eq!(decoded.kind, ClientKind::Unknown(FUTURE_SECTION));
+        assert_eq!(
+            ProtobufClientDiagnostics::from(decoded).kind,
+            FUTURE_SECTION
+        );
     }
 
     #[test]

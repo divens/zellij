@@ -1546,6 +1546,8 @@ pub struct StructuredClientState {
     pub last_cursor: CursorState,
     pub in_flight: Option<u64>,
     pub in_flight_since: Option<Instant>,
+    /// How long the client took to acknowledge its last frame.
+    pub last_ack_rtt: Option<Duration>,
     pub overlay: PendingOverlay,
     pub last_geometry: Option<GeometryRecord>,
     pub links: LinkTable,
@@ -1744,6 +1746,7 @@ impl Default for StructuredClientState {
             last_cursor: CursorState::default(),
             in_flight: None,
             in_flight_since: None,
+            last_ack_rtt: None,
             overlay: PendingOverlay::new(0, 0),
             last_geometry: None,
             links: LinkTable::default(),
