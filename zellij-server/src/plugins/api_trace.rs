@@ -17,7 +17,7 @@ use std::path::Path;
 
 use zellij_utils::data::{CommandType, EventType, HttpVerb, PermissionType, PluginCommand};
 use zellij_utils::diagnostics::{
-    ApiCommandOutcome, ApiTraceBatch, ApiTraceRecord, EventCount, PluginEventLoad,
+    ApiCommandOutcome, ApiTraceBatch, ApiTraceRecord, EventCount, PluginErrorKind, PluginEventLoad,
 };
 
 use super::{PluginId, PluginInstruction};
@@ -95,6 +95,24 @@ pub struct CommandOutcome {
     pub message: Option<String>,
     /// From `summarize`.
     pub summary: Option<String>,
+}
+
+/// How a command ended, for its record: how it failed if it did, else
+/// whether it was denied, else whether its handler swallowed an error
+/// (returned fine, but something in it went wrong).
+pub fn outcome_of(
+    failure: Option<PluginErrorKind>,
+    denied: bool,
+    swallowed_errors: bool,
+) -> ApiCommandOutcome {
+    match failure {
+        Some(PluginErrorKind::Forbidden) => ApiCommandOutcome::Forbidden,
+        Some(PluginErrorKind::Undecodable) => ApiCommandOutcome::Undecodable,
+        Some(_) => ApiCommandOutcome::Failed,
+        None if denied => ApiCommandOutcome::Denied,
+        None if swallowed_errors => ApiCommandOutcome::Failed,
+        None => ApiCommandOutcome::Ok,
+    }
 }
 
 /// The longest summary kept.
@@ -568,6 +586,25 @@ mod tests {
         );
         let many = names((0..9).map(|n| format!("E{n}")));
         assert_eq!(many, "E0, E1, E2, E3, E4, E5 +3 more");
+    }
+
+    #[test]
+    fn a_command_whose_handler_swallowed_an_error_failed() {
+        assert_eq!(outcome_of(None, false, false), ApiCommandOutcome::Ok);
+        assert_eq!(outcome_of(None, false, true), ApiCommandOutcome::Failed);
+        assert_eq!(outcome_of(None, true, true), ApiCommandOutcome::Denied);
+        assert_eq!(
+            outcome_of(Some(PluginErrorKind::Forbidden), false, true),
+            ApiCommandOutcome::Forbidden
+        );
+        assert_eq!(
+            outcome_of(Some(PluginErrorKind::Undecodable), false, false),
+            ApiCommandOutcome::Undecodable
+        );
+        assert_eq!(
+            outcome_of(Some(PluginErrorKind::Failed), false, false),
+            ApiCommandOutcome::Failed
+        );
     }
 
     #[test]

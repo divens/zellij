@@ -9577,12 +9577,21 @@ fn load_fixture_with(
     client_id: zellij_utils::data::ClientId,
     configuration: &[(&str, &str)],
 ) {
+    load_fixture_allowing_exec(plugin_thread_sender, client_id, configuration, false);
+}
+
+fn load_fixture_allowing_exec(
+    plugin_thread_sender: &SenderWithContext<PluginInstruction>,
+    client_id: zellij_utils::data::ClientId,
+    configuration: &[(&str, &str)],
+    allow_exec_host_cmd: bool,
+) {
     let configuration: BTreeMap<String, String> = configuration
         .iter()
         .map(|(key, value)| (key.to_string(), value.to_string()))
         .collect();
     let run_plugin = RunPluginOrAlias::RunPlugin(RunPlugin {
-        _allow_exec_host_cmd: false,
+        _allow_exec_host_cmd: allow_exec_host_cmd,
         location: RunPluginLocation::File(PathBuf::from(&*PLUGIN_FIXTURE)),
         configuration: PluginUserConfiguration::new(configuration),
         ..Default::default()
@@ -10021,6 +10030,106 @@ pub fn a_denied_command_lands_in_the_plugins_error_log() {
     assert_eq!(denied.command.as_deref(), Some("StartWebServer"));
     assert_eq!(denied.permission.as_deref(), Some("StartWebServer"));
     assert_eq!(denied.repeats, 2, "the same denial twice is one record");
+}
+
+/// Has the fixture call exec_cmd with a program that doesn't exist, and
+/// returns the record its error log gets for it.
+fn exec_cmd_error_record(
+    allow_exec_host_cmd: bool,
+) -> zellij_utils::diagnostics::PluginErrorRecord {
+    use crate::diagnostics::DiagnosticsReplyTo;
+    use zellij_utils::diagnostics::{DiagnosticsReport, DiagnosticsSection};
+    let temp_folder = tempdir().unwrap(); // placed explicitly in the test scope because its
+                                          // destructor removes the directory
+    let plugin_host_folder = PathBuf::from(temp_folder.path());
+    let cache_path = plugin_host_folder.join("permissions_test.kdl");
+    let (plugin_thread_sender, screen_receiver, teardown) =
+        create_plugin_thread(Some(plugin_host_folder), None);
+    let client_id = 1;
+    let received_screen_instructions = Arc::new(Mutex::new(vec![]));
+    let screen_thread = grant_permissions_and_log_actions_until!(
+        received_screen_instructions,
+        screen_receiver,
+        &PermissionType::ReadDiagnostics,
+        cache_path,
+        plugin_thread_sender,
+        client_id,
+        |_event: &ScreenInstruction| false
+    );
+    load_fixture_allowing_exec(
+        &plugin_thread_sender,
+        client_id,
+        &[("diagnostics_fixture", "true")],
+        allow_exec_host_cmd,
+    );
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let _ = plugin_thread_sender.send(PluginInstruction::Update(vec![(
+        None,
+        Some(client_id),
+        Event::Key(KeyWithModifier::new(BareKey::Char('w')).with_super_modifier()),
+    )]));
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let (sender, receiver) = crossbeam::channel::bounded(1);
+    let _ = plugin_thread_sender.send(PluginInstruction::DeliverDiagnostics(
+        DiagnosticsReport {
+            sections: vec![DiagnosticsSection::PluginErrors],
+            ..Default::default()
+        },
+        DiagnosticsReplyTo::Channel(sender),
+    ));
+    let report = receiver
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the plugin thread answers");
+    teardown();
+    screen_thread.join().unwrap();
+    let log = report
+        .plugin_errors
+        .iter()
+        .find(|log| log.plugin_id == 0)
+        .unwrap_or_else(|| panic!("the fixture has an error log: {:?}", report.plugin_errors));
+    let record = log
+        .records
+        .iter()
+        .find(|record| record.command.as_deref() == Some("ExecCmd"))
+        .unwrap_or_else(|| panic!("the exec_cmd error was recorded: {log:?}"))
+        .clone();
+    assert_eq!(
+        record.kind,
+        zellij_utils::diagnostics::PluginErrorKind::Failed,
+        "{record:?}"
+    );
+    assert_eq!(record.permission, None, "{record:?}");
+    assert!(
+        !record.message.contains("failed to run plugin command"),
+        "the chokepoint's own error isn't the handler's: {record:?}"
+    );
+    record
+}
+
+#[test]
+#[ignore]
+pub fn an_error_a_command_swallows_lands_in_the_plugins_error_log() {
+    // Allowed to run, the program fails to start: the handler swallows that
+    // with non_fatal() and returns fine.
+    let record = exec_cmd_error_record(true);
+    assert!(
+        record.message.contains("failed to execute command on host"),
+        "{record:?}"
+    );
+}
+
+#[test]
+#[ignore]
+pub fn a_command_the_host_skips_lands_in_the_plugins_error_log() {
+    // Not allowed to run, the command is skipped with a warning in the log
+    // and nothing for the plugin.
+    let record = exec_cmd_error_record(false);
+    assert!(
+        record
+            .message
+            .contains("isn't allow to run command in host side"),
+        "{record:?}"
+    );
 }
 
 #[test]

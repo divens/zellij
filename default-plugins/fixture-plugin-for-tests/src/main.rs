@@ -1007,6 +1007,11 @@ impl ZellijPlugin for State {
                     // diagnostics tests expect this to be denied and logged.
                     start_web_server();
                 },
+                BareKey::Char('w') if key.has_only_modifiers(&[KeyModifier::Super]) => {
+                    // There's no such program, and the host swallows the
+                    // failure: the diagnostics tests expect it logged.
+                    exec_cmd(&["zellij-fixture-no-such-program"]);
+                },
                 BareKey::Char('t') if key.has_only_modifiers(&[KeyModifier::Super]) => {
                     let session = self.target_session();
                     get_session_pane_preview(

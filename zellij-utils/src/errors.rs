@@ -16,6 +16,7 @@ use colored::*;
 #[allow(unused_imports)] // used in set_panic_handler; may appear unused under wasm target
 use log::error;
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::fmt::{Display, Error, Formatter};
 use std::path::PathBuf;
 
@@ -145,9 +146,80 @@ pub trait FatalError<T> {
 /// `FatalError::non_fatal`!
 fn discard_result<T>(_arg: anyhow::Result<T>) {}
 
+thread_local! {
+    /// While a [`SwallowedErrors`] guard is alive on this thread, `non_fatal`
+    /// also keeps the errors it swallows here.
+    static SWALLOWED: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
+
+/// The most errors one collection keeps.
+const SWALLOWED_MAX: usize = 8;
+
+/// Collects the errors swallowed on this thread while it lives: those
+/// [`FatalError::non_fatal`] logs, and those code logs itself and passes to
+/// [`note_swallowed_error`]. For code that wants to know about them: the
+/// plugin command handler reports them as that plugin's errors. Errors in
+/// work handed to another thread aren't seen. Collections nest: dropping one
+/// restores the one before.
+#[must_use]
+pub struct SwallowedErrors {
+    previous: Option<Option<Vec<String>>>,
+}
+
+/// Starts collecting the errors `non_fatal` swallows on this thread.
+pub fn collect_swallowed_errors() -> SwallowedErrors {
+    let previous = SWALLOWED.with(|cell| cell.replace(Some(Vec::new())));
+    SwallowedErrors {
+        previous: Some(previous),
+    }
+}
+
+impl SwallowedErrors {
+    /// The errors swallowed so far, oldest first, each on one line; stops
+    /// collecting.
+    pub fn take(mut self) -> Vec<String> {
+        self.restore()
+    }
+
+    fn restore(&mut self) -> Vec<String> {
+        match self.previous.take() {
+            Some(previous) => SWALLOWED
+                .with(|cell| cell.replace(previous))
+                .unwrap_or_default(),
+            None => Vec::new(),
+        }
+    }
+}
+
+impl Drop for SwallowedErrors {
+    fn drop(&mut self) {
+        self.restore();
+    }
+}
+
+/// Keeps an error that was logged and not returned, if this thread is
+/// collecting them (see [`collect_swallowed_errors`]); otherwise does nothing.
+pub fn note_swallowed_error(message: &str) {
+    keep_swallowed(|| message.to_string());
+}
+
+/// Only formats the message while a collection wants it.
+fn keep_swallowed(message: impl FnOnce() -> String) {
+    SWALLOWED.with(|cell| {
+        if let Ok(mut swallowed) = cell.try_borrow_mut() {
+            if let Some(swallowed) = swallowed.as_mut() {
+                if swallowed.len() < SWALLOWED_MAX {
+                    swallowed.push(message());
+                }
+            }
+        }
+    });
+}
+
 impl<T> FatalError<T> for anyhow::Result<T> {
     fn non_fatal(self) {
-        if self.is_err() {
+        if let Err(error) = &self {
+            keep_swallowed(|| format!("{error:#}"));
             discard_result(self.context("a non-fatal error occurred").to_log());
         }
     }
@@ -1130,5 +1202,68 @@ mod not_wasm {
                 },
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod swallowed_errors_tests {
+    use super::{collect_swallowed_errors, note_swallowed_error, FatalError, SWALLOWED_MAX};
+    use anyhow::{anyhow, Context};
+
+    fn swallow(message: &str) {
+        Err::<(), _>(anyhow!(message.to_string()))
+            .context("while testing")
+            .non_fatal();
+    }
+
+    #[test]
+    fn swallowed_errors_are_collected_while_asked_for() {
+        swallow("before anyone asked");
+        let collecting = collect_swallowed_errors();
+        swallow("first");
+        Ok::<(), anyhow::Error>(()).non_fatal();
+        swallow("second");
+        assert_eq!(
+            collecting.take(),
+            vec!["while testing: first", "while testing: second"]
+        );
+        swallow("after");
+        assert!(collect_swallowed_errors().take().is_empty());
+    }
+
+    #[test]
+    fn collections_nest_and_are_bounded() {
+        let outer = collect_swallowed_errors();
+        swallow("outer");
+        {
+            let inner = collect_swallowed_errors();
+            for n in 0..SWALLOWED_MAX + 3 {
+                swallow(&format!("inner {n}"));
+            }
+            assert_eq!(inner.take().len(), SWALLOWED_MAX);
+        }
+        let dropped = collect_swallowed_errors();
+        swallow("never taken");
+        drop(dropped);
+        assert_eq!(outer.take(), vec!["while testing: outer"]);
+    }
+
+    #[test]
+    fn errors_logged_by_hand_are_collected_too() {
+        note_swallowed_error("nobody is collecting");
+        let collecting = collect_swallowed_errors();
+        swallow("through non_fatal");
+        note_swallowed_error("logged by hand");
+        assert_eq!(
+            collecting.take(),
+            vec!["while testing: through non_fatal", "logged by hand"]
+        );
+    }
+
+    #[test]
+    fn other_threads_errors_are_not_collected() {
+        let collecting = collect_swallowed_errors();
+        std::thread::spawn(|| swallow("elsewhere")).join().unwrap();
+        assert!(collecting.take().is_empty());
     }
 }

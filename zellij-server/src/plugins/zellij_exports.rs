@@ -10,7 +10,6 @@ use crate::route::{route_action, wait_for_action_completion, NotificationEnd};
 use crate::session_suggestions::SessionSuggestionsJob;
 use crate::ClientId;
 use crate::ServerInstruction;
-use log::warn;
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashSet},
@@ -128,6 +127,29 @@ use zellij_utils::plugin_api::plugin_command::{
     RevokeTokenResponse,
 };
 
+/// For the errors a command's handler logs instead of returning: logs `$arg`
+/// as `log::error!` would, and keeps it for the plugin's error log (the
+/// command handler collects these, see `collect_swallowed_errors`). Only
+/// for code that runs on the command's own thread; a spawned thread's
+/// errors would never be collected.
+macro_rules! log_plugin_error {
+    ($($arg:tt)+) => {{
+        let message = format!($($arg)+);
+        log::error!("{}", message);
+        zellij_utils::errors::note_swallowed_error(&message);
+    }};
+}
+
+/// Like `log_plugin_error`, at warning level: for a command the host
+/// refuses or skips without telling the plugin.
+macro_rules! log_plugin_warning {
+    ($($arg:tt)+) => {{
+        let message = format!($($arg)+);
+        log::warn!("{}", message);
+        zellij_utils::errors::note_swallowed_error(&message);
+    }};
+}
+
 macro_rules! apply_action {
     ($action:ident, $error_message:ident, $env: ident) => {
         match {
@@ -147,7 +169,7 @@ macro_rules! apply_action {
         } {
             Ok((_, result)) => result,
             Err(e) => {
-                log::error!("{}: {:?}", $error_message(), e);
+                log_plugin_error!("{}: {:?}", $error_message(), e);
                 None
             },
         }
@@ -390,7 +412,7 @@ fn open_plugin_popup(
     ) {
         Ok(run_plugin_or_alias) => run_plugin_or_alias,
         Err(e) => {
-            log::error!("Failed to open popup: {}", e);
+            log_plugin_error!("Failed to open popup: {}", e);
             return;
         },
     };
@@ -423,13 +445,13 @@ fn run_context_menu_item(env: &PluginEnv, index: usize) {
         })
         .is_err()
     {
-        log::error!("Failed to request context menu item {}", index);
+        log_plugin_error!("Failed to request context menu item {}", index);
         return;
     }
     let actions = match response_receiver.recv_timeout(Duration::from_secs(5)) {
         Ok(actions) => actions,
         Err(e) => {
-            log::error!("Failed to get context menu item {}: {:?}", index, e);
+            log_plugin_error!("Failed to get context menu item {}: {:?}", index, e);
             return;
         },
     };
@@ -501,7 +523,7 @@ fn switch_session_and_close_current(
         .map(|s| s.contains('/'))
         .unwrap_or(false)
     {
-        log::error!("Session names cannot contain \'/\'");
+        log_plugin_error!("Session names cannot contain \'/\'");
         return Ok(());
     }
     let client_id = acting_client(env);
@@ -620,7 +642,7 @@ fn desktop_integration(env: &PluginEnv, request: String) {
     let client_id = acting_client(env);
     let allowed = may_change_desktop_integration(&env.plugin.location);
     if !allowed {
-        log::warn!(
+        log_plugin_warning!(
             "Ignoring a desktop integration request from {}: only built-in plugins may make it",
             env.plugin.location.display()
         );
@@ -703,6 +725,9 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
     // feed each batch into the next.
     let trace_started =
         (env.api_trace.is_active() && !subscribes_to_trace(env)).then(std::time::Instant::now);
+    // The errors the command's handler logs instead of returning, with
+    // non_fatal() or log_plugin_error!, are the plugin's errors too.
+    let swallowed = zellij_utils::errors::collect_swallowed_errors();
     let result = wasi_read_bytes(env)
         .and_then(|bytes| {
             let command: ProtobufPluginCommand = ProtobufPluginCommand::decode(bytes.as_slice())?;
@@ -1577,7 +1602,10 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
             };
             Ok(())
         });
-    use zellij_utils::diagnostics::{ApiCommandOutcome, PluginErrorKind};
+    // Before this function's own non_fatal() below, which isn't the
+    // handler's.
+    let swallowed = swallowed.take();
+    use zellij_utils::diagnostics::PluginErrorKind;
     let failure = result.as_ref().err().map(|error| {
         let kind = if forbidden {
             PluginErrorKind::Forbidden
@@ -1598,14 +1626,22 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
             message.clone(),
         );
     }
+    for message in &swallowed {
+        super::error_log::report(
+            &env.senders,
+            env.plugin_id,
+            PluginErrorKind::Failed,
+            command_type,
+            None,
+            message.clone(),
+        );
+    }
     if let Some(started) = trace_started {
-        let outcome = match &failure {
-            Some((PluginErrorKind::Forbidden, _)) => ApiCommandOutcome::Forbidden,
-            Some((PluginErrorKind::Undecodable, _)) => ApiCommandOutcome::Undecodable,
-            Some(_) => ApiCommandOutcome::Failed,
-            None if denied => ApiCommandOutcome::Denied,
-            None => ApiCommandOutcome::Ok,
-        };
+        let outcome = super::api_trace::outcome_of(
+            failure.as_ref().map(|(kind, _)| *kind),
+            denied,
+            !swallowed.is_empty(),
+        );
         env.api_trace.record(
             &env.senders,
             env.plugin_id,
@@ -1613,7 +1649,9 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
             super::api_trace::CommandOutcome {
                 outcome,
                 permission: denied_permission,
-                message: failure.map(|(_, message)| message),
+                message: failure
+                    .map(|(_, message)| message)
+                    .or_else(|| swallowed.first().cloned()),
                 summary,
             },
             started,
@@ -1983,7 +2021,7 @@ fn open_plugin_pane_in_new_tab(
     let run_plugin_or_alias = match run_plugin_or_alias {
         Ok(r) => r,
         Err(e) => {
-            log::error!("Failed to parse plugin url '{}': {}", plugin_url, e);
+            log_plugin_error!("Failed to parse plugin url '{}': {}", plugin_url, e);
             let response =
                 ProtobufOpenPaneInNewTabResponse::from(OpenPaneInNewTabResponse::default());
             wasi_write_object(env, &response.encode_to_vec())
@@ -2038,7 +2076,7 @@ fn open_plugin_pane_floating(
     let run_plugin_or_alias = match run_plugin_or_alias {
         Ok(r) => r,
         Err(e) => {
-            log::error!("Failed to parse plugin url '{}': {}", plugin_url, e);
+            log_plugin_error!("Failed to parse plugin url '{}': {}", plugin_url, e);
             let response = ProtobufOpenPluginPaneFloatingResponse::from(
                 OpenPluginPaneFloatingResponse::default(),
             );
@@ -2143,7 +2181,7 @@ fn get_focused_pane_info(env: &PluginEnv) {
     let response = match response_receiver.recv_timeout(Duration::from_millis(100)) {
         Ok(response) => response,
         Err(RecvTimeoutError::Timeout) => {
-            log::error!(
+            log_plugin_error!(
                 "GetFocusedPaneInfo timed out for plugin {} for client {:?}",
                 env.plugin_id,
                 acting_client(env)
@@ -2151,7 +2189,7 @@ fn get_focused_pane_info(env: &PluginEnv) {
             GetFocusedPaneInfoResponse::Err("Timeout retrieving focused pane info".to_string())
         },
         Err(RecvTimeoutError::Disconnected) => {
-            log::error!(
+            log_plugin_error!(
                 "GetFocusedPaneInfo channel disconnected for plugin {}",
                 env.plugin_id
             );
@@ -2219,7 +2257,7 @@ fn parse_layout(env: &PluginEnv, layout_string: String) {
                     result: Some(parse_layout_response::Result::Metadata(protobuf_metadata)),
                 },
                 Err(e) => {
-                    log::error!("Failed to convert metadata to protobuf: {}", e);
+                    log_plugin_error!("Failed to convert metadata to protobuf: {}", e);
                     // Fallback to SyntaxError if conversion fails
                     let error = LayoutParsingError::SyntaxError;
                     let protobuf_error =
@@ -2254,7 +2292,7 @@ fn parse_layout(env: &PluginEnv, layout_string: String) {
             // Convert LayoutParsingError to protobuf
             // TryFrom is implemented in zellij-utils/src/plugin_api/event.rs:1293-1314
             let protobuf_error = error.try_into().unwrap_or_else(|e| {
-                log::error!("Failed to convert error to protobuf: {}", e);
+                log_plugin_error!("Failed to convert error to protobuf: {}", e);
                 ProtobufLayoutParsingError {
                     error_type: Some(ProtobufLayoutParsingErrorType::SyntaxError(
                         ProtobufSyntaxError {},
@@ -3453,7 +3491,7 @@ fn exec_cmd(env: &PluginEnv, mut command_line: Vec<String>) {
 
     // Bail out if we're forbidden to run command
     if !env.plugin._allow_exec_host_cmd {
-        warn!("This plugin isn't allow to run command in host side, skip running this command: '{cmd} {args}'.",
+        log_plugin_warning!("This plugin isn't allow to run command in host side, skip running this command: '{cmd} {args}'.",
         	cmd = command, args = command_line.join(" "));
         return;
     }
@@ -3474,7 +3512,7 @@ fn run_command(
     context: BTreeMap<String, String>,
 ) {
     if command_line.is_empty() {
-        log::error!("Command cannot be empty");
+        log_plugin_error!("Command cannot be empty");
     } else {
         let command = command_line.remove(0);
         let cwd = translate_plugin_path(env, cwd);
@@ -3631,7 +3669,7 @@ fn may_reply_to_prompt(location: &RunPluginLocation) -> bool {
 
 fn reply_to_prompt(env: &PluginEnv, request_id: u64, result: PromptResult) {
     if !may_reply_to_prompt(&env.plugin.location) {
-        log::warn!(
+        log_plugin_warning!(
             "Ignoring a prompt reply from {}: only the prompt plugin can answer prompts",
             env.plugin.location.display()
         );
@@ -3686,11 +3724,11 @@ fn read_config(env: &PluginEnv) {
         Ok(()) => response_receiver
             .recv_timeout(Duration::from_secs(5))
             .unwrap_or_else(|e| {
-                log::error!("Failed to read config: {:?}", e);
+                log_plugin_error!("Failed to read config: {:?}", e);
                 ConfigSnapshot::default()
             }),
         Err(e) => {
-            log::error!("Failed to request config: {:?}", e);
+            log_plugin_error!("Failed to request config: {:?}", e);
             ConfigSnapshot::default()
         },
     };
@@ -4183,7 +4221,7 @@ fn switch_session(
         .map(|s| s.contains('/'))
         .unwrap_or(false)
     {
-        log::error!("Session names cannot contain \'/\'");
+        log_plugin_error!("Session names cannot contain \'/\'");
     } else {
         let client_id = acting_client(env);
         let tab_position = tab_position.map(|p| p + 1); // ¯\_()_/¯
@@ -4248,7 +4286,7 @@ fn delete_all_dead_sessions() -> Result<()> {
     let index = match zellij_utils::session_index::SessionIndex::open_default() {
         Ok(index) => Some(index),
         Err(e) => {
-            log::error!("Failed to open the session index: {}", e);
+            log_plugin_error!("Failed to open the session index: {}", e);
             None
         },
     };
@@ -4414,7 +4452,7 @@ fn get_nested_session_keybinds(env: &PluginEnv, pane_id: PaneId) {
         Ok(protobuf_response) => {
             let _ = wasi_write_object(env, &protobuf_response.encode_to_vec());
         },
-        Err(e) => log::error!("failed to encode nested session keybindings: {}", e),
+        Err(e) => log_plugin_error!("failed to encode nested session keybindings: {}", e),
     }
 }
 
@@ -4683,7 +4721,7 @@ fn kill_sessions(session_names: Vec<String>) {
         let resolved = zellij_utils::sessions::resolve_session_socket_path(&session_name)
             .unwrap_or_else(|| ZELLIJ_SOCK_DIR.join(&session_name));
         if let Err(e) = zellij_utils::sessions::send_kill_session(&resolved) {
-            log::error!("Failed to kill session {}: {:?}", session_name, e);
+            log_plugin_error!("Failed to kill session {}: {:?}", session_name, e);
         }
     }
 }
@@ -4854,7 +4892,7 @@ fn dump_session_layout(env: &PluginEnv, tab_index: Option<usize>) {
         .and_then(|metadata| match metadata.try_into() {
             Ok(pb) => Some(pb),
             Err(e) => {
-                log::error!("Failed to convert LayoutMetadata to protobuf: {}", e);
+                log_plugin_error!("Failed to convert LayoutMetadata to protobuf: {}", e);
                 None
             },
         });
@@ -5074,7 +5112,7 @@ fn get_pane_info(env: &PluginEnv, pane_id: zellij_utils::data::PaneId) {
             match pane_info.try_into() {
                 Ok(protobuf_pane_info) => Some(protobuf_pane_info),
                 Err(e) => {
-                    log::error!(
+                    log_plugin_error!(
                         "Failed to convert PaneInfo to protobuf for pane {:?}: {}",
                         pane_id,
                         e
@@ -5085,7 +5123,7 @@ fn get_pane_info(env: &PluginEnv, pane_id: zellij_utils::data::PaneId) {
         },
         Ok(None) => None, // Pane not found
         Err(RecvTimeoutError::Timeout) => {
-            log::error!(
+            log_plugin_error!(
                 "GetPaneInfo timed out for pane {:?} from plugin {}",
                 pane_id,
                 env.plugin_id
@@ -5093,7 +5131,7 @@ fn get_pane_info(env: &PluginEnv, pane_id: zellij_utils::data::PaneId) {
             None
         },
         Err(RecvTimeoutError::Disconnected) => {
-            log::error!(
+            log_plugin_error!(
                 "GetPaneInfo channel disconnected for plugin {}",
                 env.plugin_id
             );
@@ -5136,7 +5174,7 @@ fn get_tab_info(env: &PluginEnv, tab_id: usize) {
             match tab_info.try_into() {
                 Ok(protobuf_tab_info) => Some(protobuf_tab_info),
                 Err(e) => {
-                    log::error!(
+                    log_plugin_error!(
                         "Failed to convert TabInfo to protobuf for tab {}: {}",
                         tab_id,
                         e
@@ -5147,7 +5185,7 @@ fn get_tab_info(env: &PluginEnv, tab_id: usize) {
         },
         Ok(None) => None, // Tab not found
         Err(RecvTimeoutError::Timeout) => {
-            log::error!(
+            log_plugin_error!(
                 "GetTabInfo timed out for tab {} from plugin {}",
                 tab_id,
                 env.plugin_id
@@ -5155,7 +5193,7 @@ fn get_tab_info(env: &PluginEnv, tab_id: usize) {
             None
         },
         Err(RecvTimeoutError::Disconnected) => {
-            log::error!(
+            log_plugin_error!(
                 "GetTabInfo channel disconnected for plugin {}",
                 env.plugin_id
             );
@@ -5260,7 +5298,7 @@ fn set_pane_color(env: &PluginEnv, pane_id: PaneId, fg: Option<String>, bg: Opti
 
 fn scan_host_folder(env: &PluginEnv, folder_to_scan: PathBuf) {
     if !folder_to_scan.starts_with("/host") {
-        log::error!(
+        log_plugin_error!(
             "Can only scan files in the /host filesystem, found: {}",
             folder_to_scan.display()
         );
@@ -5274,7 +5312,7 @@ fn scan_host_folder(env: &PluginEnv, folder_to_scan: PathBuf) {
     match folder_to_scan.canonicalize() {
         Ok(folder_to_scan) => {
             if !folder_to_scan.starts_with(&plugin_host_folder) {
-                log::error!(
+                log_plugin_error!(
                     "Can only scan files in the plugin filesystem: {}, found: {}",
                     plugin_host_folder.display(),
                     folder_to_scan.display()
@@ -5315,12 +5353,12 @@ fn scan_host_folder(env: &PluginEnv, folder_to_scan: PathBuf) {
                     });
                 },
                 Err(e) => {
-                    log::error!("Failed to read folder {}: {e}", folder_to_scan.display());
+                    log_plugin_error!("Failed to read folder {}: {e}", folder_to_scan.display());
                 },
             }
         },
         Err(e) => {
-            log::error!(
+            log_plugin_error!(
                 "Failed to canonicalize path {folder_to_scan:?} when scanning folder: {:?}",
                 e
             );
@@ -5330,7 +5368,7 @@ fn scan_host_folder(env: &PluginEnv, folder_to_scan: PathBuf) {
 
 #[cfg(not(windows))]
 fn list_windows_volumes(_env: &PluginEnv) {
-    log::error!("ListWindowsVolumes is only supported on Windows");
+    log_plugin_error!("ListWindowsVolumes is only supported on Windows");
 }
 
 fn set_soft_keyboard(env: &PluginEnv, on: bool) {
@@ -5469,7 +5507,7 @@ fn get_pane_scrollback(env: &PluginEnv, pane_id: PaneId, get_full_scrollback: bo
     let response = match response_receiver.recv_timeout(Duration::from_secs(5)) {
         Ok(response) => response,
         Err(RecvTimeoutError::Timeout) => {
-            log::error!(
+            log_plugin_error!(
                 "GetPaneScrollback timed out after 5s for plugin {} requesting pane {:?}",
                 env.plugin_id,
                 pane_id
@@ -5480,7 +5518,7 @@ fn get_pane_scrollback(env: &PluginEnv, pane_id: PaneId, get_full_scrollback: bo
             ))
         },
         Err(RecvTimeoutError::Disconnected) => {
-            log::error!(
+            log_plugin_error!(
                 "GetPaneScrollback channel disconnected for plugin {} requesting pane {:?}",
                 env.plugin_id,
                 pane_id
@@ -5588,7 +5626,7 @@ fn get_pane_pid(env: &PluginEnv, pane_id: PaneId) {
     let response = match response_receiver.recv_timeout(Duration::from_millis(100)) {
         Ok(response) => response,
         Err(RecvTimeoutError::Timeout) => {
-            log::error!(
+            log_plugin_error!(
                 "GetPanePid timed out after 5s for plugin {} requesting pane {:?}",
                 env.plugin_id,
                 pane_id
@@ -5596,7 +5634,7 @@ fn get_pane_pid(env: &PluginEnv, pane_id: PaneId) {
             GetPanePidResponse::Err(format!("Timeout retrieving PID for pane {:?}", pane_id))
         },
         Err(RecvTimeoutError::Disconnected) => {
-            log::error!(
+            log_plugin_error!(
                 "GetPanePid channel disconnected for plugin {} requesting pane {:?}",
                 env.plugin_id,
                 pane_id
@@ -5688,7 +5726,7 @@ fn await_pane_running_command_response(
     match receiver.recv_timeout(Duration::from_millis(100)) {
         Ok(response) => response,
         Err(RecvTimeoutError::Timeout) => {
-            log::error!(
+            log_plugin_error!(
                 "GetPaneRunningCommand timed out for plugin {} requesting pane {:?}",
                 env.plugin_id,
                 pane_id
@@ -5699,7 +5737,7 @@ fn await_pane_running_command_response(
             ))
         },
         Err(RecvTimeoutError::Disconnected) => {
-            log::error!(
+            log_plugin_error!(
                 "GetPaneRunningCommand channel disconnected for plugin {} requesting pane {:?}",
                 env.plugin_id,
                 pane_id
@@ -5756,7 +5794,7 @@ fn await_pane_cwd_response(
     match receiver.recv_timeout(Duration::from_millis(100)) {
         Ok(response) => response,
         Err(RecvTimeoutError::Timeout) => {
-            log::error!(
+            log_plugin_error!(
                 "GetPaneCwd timed out for plugin {} requesting pane {:?}",
                 env.plugin_id,
                 pane_id
@@ -5764,7 +5802,7 @@ fn await_pane_cwd_response(
             GetPaneCwdResponse::Err(format!("Timeout retrieving CWD for pane {:?}", pane_id))
         },
         Err(RecvTimeoutError::Disconnected) => {
-            log::error!(
+            log_plugin_error!(
                 "GetPaneCwd channel disconnected for plugin {} requesting pane {:?}",
                 env.plugin_id,
                 pane_id
@@ -6330,7 +6368,7 @@ fn load_new_plugin(
                     ));
             },
             Err(e) => {
-                log::error!("Failed to load new plugin: {:?}", e);
+                log_plugin_error!("Failed to load new plugin: {:?}", e);
             },
         }
     } else {
@@ -6364,7 +6402,7 @@ fn load_new_plugin(
                 ));
             },
             Err(e) => {
-                log::error!("Failed to load new plugin: {:?}", e);
+                log_plugin_error!("Failed to load new plugin: {:?}", e);
             },
         }
     }
@@ -6380,7 +6418,7 @@ fn stop_web_server(_env: &PluginEnv) {
     #[cfg(feature = "web_server_capability")]
     let _ = shutdown_all_webserver_instances();
     #[cfg(not(feature = "web_server_capability"))]
-    log::error!("This instance of Zellij was compiled without web server capabilities");
+    log_plugin_error!("This instance of Zellij was compiled without web server capabilities");
 }
 
 fn query_web_server_status(env: &PluginEnv) {
@@ -6483,7 +6521,7 @@ fn generate_web_login_token(env: &PluginEnv, token_label: Option<String>, read_o
 
 #[cfg(not(feature = "web_server_capability"))]
 fn generate_web_login_token(env: &PluginEnv, _token_label: Option<String>, _read_only: bool) {
-    log::error!("This version of Zellij was compiled without the web server capabilities!");
+    log_plugin_error!("This version of Zellij was compiled without the web server capabilities!");
     let empty_vec: Vec<&str> = vec![];
     let _ = wasi_write_object(env, &empty_vec);
 }
@@ -6509,7 +6547,7 @@ fn revoke_web_login_token(env: &PluginEnv, token_label: String) {
 
 #[cfg(not(feature = "web_server_capability"))]
 fn revoke_web_login_token(env: &PluginEnv, _token_label: String) {
-    log::error!("This version of Zellij was compiled without the web server capabilities!");
+    log_plugin_error!("This version of Zellij was compiled without the web server capabilities!");
     let empty_vec: Vec<&str> = vec![];
     let _ = wasi_write_object(env, &empty_vec);
 }
@@ -6531,7 +6569,7 @@ fn revoke_all_web_login_tokens(env: &PluginEnv) {
 
 #[cfg(not(feature = "web_server_capability"))]
 fn revoke_all_web_login_tokens(env: &PluginEnv) {
-    log::error!("This version of Zellij was compiled without the web server capabilities!");
+    log_plugin_error!("This version of Zellij was compiled without the web server capabilities!");
     let empty_vec: Vec<&str> = vec![];
     let _ = wasi_write_object(env, &empty_vec);
 }
@@ -6553,7 +6591,7 @@ fn rename_web_login_token(env: &PluginEnv, old_name: String, new_name: String) {
 
 #[cfg(not(feature = "web_server_capability"))]
 fn rename_web_login_token(env: &PluginEnv, _old_name: String, _new_name: String) {
-    log::error!("This version of Zellij was compiled without the web server capabilities!");
+    log_plugin_error!("This version of Zellij was compiled without the web server capabilities!");
     let empty_vec: Vec<&str> = vec![];
     let _ = wasi_write_object(env, &empty_vec);
 }
@@ -6579,7 +6617,7 @@ fn list_web_login_tokens(env: &PluginEnv) {
 
 #[cfg(not(feature = "web_server_capability"))]
 fn list_web_login_tokens(env: &PluginEnv) {
-    log::error!("This version of Zellij was compiled without the web server capabilities!");
+    log_plugin_error!("This version of Zellij was compiled without the web server capabilities!");
     let empty_vec: Vec<&str> = vec![];
     let _ = wasi_write_object(env, &empty_vec);
 }
