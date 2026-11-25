@@ -698,6 +698,7 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
     let mut forbidden = false;
     let mut denied = false;
     let mut denied_permission: Option<PermissionType> = None;
+    let mut summary: Option<String> = None;
     // The trace leaves out its subscribers' own commands: tracing them would
     // feed each batch into the next.
     let trace_started =
@@ -709,6 +710,9 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
                 .try_into()
                 .map_err(|e| anyhow!("failed to convert serialized command: {}", e))?;
             command_type = Some(CommandType::from(&command));
+            if trace_started.is_some() {
+                summary = super::api_trace::summarize(&command);
+            }
             if self_command_is_forbidden(&env, &command) {
                 forbidden = true;
                 if self_command_has_response(&command) {
@@ -1610,6 +1614,7 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
                 outcome,
                 permission: denied_permission,
                 message: failure.map(|(_, message)| message),
+                summary,
             },
             started,
         );

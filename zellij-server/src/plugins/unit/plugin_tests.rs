@@ -9760,6 +9760,12 @@ pub fn the_api_trace_reaches_its_subscriber_without_its_own_commands() {
         !rendered.contains("PluginEventLoad { plugin_id: 0,"),
         "the subscriber's own events were tallied: {rendered}"
     );
+    // The fixture opens /path/to/my/file.rs: the record names the file only.
+    assert!(
+        rendered.contains("summary: Some(\"file.rs\")"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("/path/to/my"), "{rendered}");
 }
 
 fn load_diagnostics_fixture(

@@ -83,6 +83,8 @@ pub struct ApiTraceRecord {
     pub message: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(uint64, tag="8")]
     pub duration_us: u64,
+    #[prost(string, optional, tag="9")]
+    pub summary: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

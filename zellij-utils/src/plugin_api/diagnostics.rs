@@ -338,6 +338,7 @@ impl From<ProtobufApiTraceRecord> for ApiTraceRecord {
             permission: record.permission,
             message: record.message,
             duration_us: record.duration_us,
+            summary: record.summary,
         }
     }
 }
@@ -353,6 +354,7 @@ impl From<ApiTraceRecord> for ProtobufApiTraceRecord {
             permission: record.permission,
             message: record.message,
             duration_us: record.duration_us,
+            summary: record.summary,
         }
     }
 }
@@ -805,6 +807,7 @@ mod tests {
                     permission: Some("RunCommands".to_string()),
                     message: None,
                     duration_us: 12,
+                    summary: Some("git (+3 args)".to_string()),
                 },
                 ApiTraceRecord {
                     seq: 5,

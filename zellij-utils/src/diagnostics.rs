@@ -194,6 +194,11 @@ pub struct ApiTraceRecord {
     /// How long the server took to handle the command. Work it handed to
     /// other threads isn't included.
     pub duration_us: u64,
+    /// For the few commands whose arguments are the point, a short
+    /// description: `git (+3 args)`, `GET api.github.com`, `notes.md`,
+    /// `12 bytes`. Redacted: never command arguments, URL paths, written
+    /// content or message payloads, and files only by name.
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
