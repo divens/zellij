@@ -36,6 +36,32 @@ pub struct ApiTraceBatch {
     pub dropped: u64,
     #[prost(message, repeated, tag="2")]
     pub records: ::prost::alloc::vec::Vec<ApiTraceRecord>,
+    #[prost(uint64, tag="3")]
+    pub window_us: u64,
+    #[prost(message, repeated, tag="4")]
+    pub events: ::prost::alloc::vec::Vec<PluginEventLoad>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PluginEventLoad {
+    #[prost(uint32, tag="1")]
+    pub plugin_id: u32,
+    #[prost(message, repeated, tag="2")]
+    pub events: ::prost::alloc::vec::Vec<EventCount>,
+    #[prost(uint64, tag="3")]
+    pub update_time_us: u64,
+    #[prost(uint32, tag="4")]
+    pub renders: u32,
+    #[prost(uint64, tag="5")]
+    pub render_time_us: u64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EventCount {
+    #[prost(string, tag="1")]
+    pub event: ::prost::alloc::string::String,
+    #[prost(uint32, tag="2")]
+    pub count: u32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

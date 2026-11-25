@@ -58,6 +58,21 @@ enum ApiCommandOutcome {
 message ApiTraceBatch {
   uint64 dropped = 1;
   repeated ApiTraceRecord records = 2;
+  uint64 window_us = 3;
+  repeated PluginEventLoad events = 4;
+}
+
+message PluginEventLoad {
+  uint32 plugin_id = 1;
+  repeated EventCount events = 2;
+  uint64 update_time_us = 3;
+  uint32 renders = 4;
+  uint64 render_time_us = 5;
+}
+
+message EventCount {
+  string event = 1;
+  uint32 count = 2;
 }
 
 message ApiTraceRecord {

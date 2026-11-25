@@ -3794,6 +3794,15 @@ pub fn apply_event_to_plugin(
     let instance = running_plugin.instance.clone();
 
     let err_context = || format!("Failed to apply event to plugin {plugin_id}");
+    // While the API trace runs, it tallies the events each plugin receives
+    // and the time they cost it.
+    let counter = {
+        let api_trace = &running_plugin.store.data().api_trace;
+        api_trace
+            .counts_events_of(plugin_subscriptions)
+            .then(|| api_trace.clone())
+    };
+    let event_type = EventType::from(event);
     match check_event_permission(running_plugin.store.data(), event) {
         (PermissionStatus::Granted, _) => {
             let mut event = event.clone();
@@ -3826,9 +3835,13 @@ pub fn apply_event_to_plugin(
                         .with_context(err_context)?;
                     wasi_write_object(running_plugin.store.data(), &protobuf_event.encode_to_vec())
                         .with_context(err_context)?;
+                    let update_started = counter.is_some().then(std::time::Instant::now);
                     let should_render = update
                         .call(&mut running_plugin.store, ())
                         .with_context(err_context)?;
+                    if let (Some(counter), Some(started)) = (&counter, update_started) {
+                        counter.record_event(plugin_id, event_type, started.elapsed());
+                    }
                     let mut should_render = should_render == 1;
                     if is_permission_request_result {
                         // we always render in this case, otherwise the request permission screen stays on
@@ -3841,6 +3854,7 @@ pub fn apply_event_to_plugin(
                     let rows = running_plugin.rows;
                     let columns = running_plugin.columns;
                     if rows > 0 && columns > 0 && should_render {
+                        let render_started = counter.is_some().then(std::time::Instant::now);
                         let rendered_bytes = instance
                             .get_typed_func::<(i32, i32), ()>(&mut running_plugin.store, "render")
                             .and_then(|render| {
@@ -3853,6 +3867,9 @@ pub fn apply_event_to_plugin(
                                     .map_err(|e| anyhow!(e))
                             })
                             .with_context(err_context)?;
+                        if let (Some(counter), Some(started)) = (&counter, render_started) {
+                            counter.record_render(plugin_id, started.elapsed());
+                        }
                         let pipes_to_block_or_unblock =
                             pipes_to_block_or_unblock(running_plugin, None);
                         let plugin_render_asset = PluginRenderAsset::new(

@@ -4,15 +4,19 @@
 //! It runs only while some plugin subscribes; otherwise a command pays one
 //! relaxed atomic load. Records go into a bounded buffer and are flushed to
 //! the subscribers every `FLUSH_EVERY`, or sooner once `FLUSH_AT` are waiting.
+//! Alongside the commands, it counts the events each plugin receives and
+//! the time it spends on them, per batch.
 //! One `ApiTrace` per session, shared by every plugin's environment.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use zellij_utils::data::{CommandType, PermissionType};
-use zellij_utils::diagnostics::{ApiCommandOutcome, ApiTraceBatch, ApiTraceRecord};
+use zellij_utils::data::{CommandType, EventType, PermissionType};
+use zellij_utils::diagnostics::{
+    ApiCommandOutcome, ApiTraceBatch, ApiTraceRecord, EventCount, PluginEventLoad,
+};
 
 use super::{PluginId, PluginInstruction};
 use crate::thread_bus::ThreadSenders;
@@ -29,6 +33,19 @@ pub const FLUSH_EVERY: Duration = Duration::from_millis(250);
 struct Buffer {
     records: VecDeque<ApiTraceRecord>,
     dropped: u64,
+    loads: HashMap<PluginId, Load>,
+    /// The current batch's window started here: when the trace came on, or
+    /// at the previous batch.
+    window_started: Option<Instant>,
+}
+
+/// What one plugin received during the current window.
+#[derive(Debug, Default)]
+struct Load {
+    events: HashMap<EventType, u32>,
+    update: Duration,
+    renders: u32,
+    render: Duration,
 }
 
 #[derive(Debug)]
@@ -86,12 +103,39 @@ impl ApiTrace {
     /// Returns whether it changed.
     pub fn set_active(&self, active: bool) -> bool {
         let was_active = self.inner.active.swap(active, Ordering::Relaxed);
-        if was_active && !active {
+        if was_active != active {
             if let Ok(mut buffer) = self.inner.buffer.lock() {
-                *buffer = Buffer::default();
+                *buffer = Buffer {
+                    window_started: active.then(Instant::now),
+                    ..Buffer::default()
+                };
             }
         }
         was_active != active
+    }
+
+    /// Whether a plugin with these subscriptions has its events counted:
+    /// while the trace is on, unless it subscribes to the trace itself.
+    pub fn counts_events_of(&self, subscriptions: &HashSet<EventType>) -> bool {
+        self.is_active() && !subscriptions.contains(&EventType::PluginApiTrace)
+    }
+
+    /// An event delivered to a plugin, and the time its `update` took.
+    pub fn record_event(&self, plugin_id: PluginId, event_type: EventType, update: Duration) {
+        if let Ok(mut buffer) = self.inner.buffer.lock() {
+            let load = buffer.loads.entry(plugin_id).or_default();
+            *load.events.entry(event_type).or_default() += 1;
+            load.update += update;
+        }
+    }
+
+    /// A render that events led to, and the time it took.
+    pub fn record_render(&self, plugin_id: PluginId, render: Duration) {
+        if let Ok(mut buffer) = self.inner.buffer.lock() {
+            let load = buffer.loads.entry(plugin_id).or_default();
+            load.renders += 1;
+            load.render += render;
+        }
     }
 
     pub fn record(
@@ -131,16 +175,46 @@ impl ApiTrace {
     }
 
     /// Everything waiting, or `None` if there is nothing to send.
+    /// Nothing to send keeps the window open, so the next batch's window
+    /// covers all the time its counts were gathered in.
     pub fn take_batch(&self) -> Option<ApiTraceBatch> {
         self.inner.flush_requested.store(false, Ordering::Relaxed);
         let mut buffer = self.inner.buffer.lock().ok()?;
-        if buffer.records.is_empty() && buffer.dropped == 0 {
+        if buffer.records.is_empty() && buffer.dropped == 0 && buffer.loads.is_empty() {
             return None;
         }
-        let buffer = std::mem::take(&mut *buffer);
+        let now = Instant::now();
+        let window_started = buffer.window_started.replace(now).unwrap_or(now);
+        let records = std::mem::take(&mut buffer.records);
+        let dropped = std::mem::take(&mut buffer.dropped);
+        let loads = std::mem::take(&mut buffer.loads);
+        let mut events: Vec<PluginEventLoad> = loads
+            .into_iter()
+            .map(|(plugin_id, load)| {
+                let mut counts: Vec<EventCount> = load
+                    .events
+                    .into_iter()
+                    .map(|(event_type, count)| EventCount {
+                        event: format!("{event_type:?}"),
+                        count,
+                    })
+                    .collect();
+                counts.sort_by(|a, b| a.event.cmp(&b.event));
+                PluginEventLoad {
+                    plugin_id,
+                    events: counts,
+                    update_time_us: load.update.as_micros() as u64,
+                    renders: load.renders,
+                    render_time_us: load.render.as_micros() as u64,
+                }
+            })
+            .collect();
+        events.sort_by_key(|load| load.plugin_id);
         Some(ApiTraceBatch {
-            dropped: buffer.dropped,
-            records: buffer.records.into(),
+            dropped,
+            window_us: now.saturating_duration_since(window_started).as_micros() as u64,
+            records: records.into(),
+            events,
         })
     }
 
@@ -229,6 +303,48 @@ mod tests {
         assert_eq!(batch.dropped, 7);
         assert_eq!(batch.records.len(), CAPACITY);
         assert_eq!(batch.records[0].seq, 7, "the oldest went first");
+    }
+
+    #[test]
+    fn events_are_tallied_per_plugin_with_the_time_they_cost() {
+        let trace = ApiTrace::default();
+        trace.set_active(true);
+        trace.record_event(5, EventType::Timer, Duration::from_micros(100));
+        trace.record_event(5, EventType::Timer, Duration::from_micros(50));
+        trace.record_event(5, EventType::TabUpdate, Duration::from_micros(10));
+        trace.record_render(5, Duration::from_micros(400));
+        trace.record_event(2, EventType::Key, Duration::from_micros(1));
+        let batch = trace.take_batch().unwrap();
+        let ids: Vec<u32> = batch.events.iter().map(|load| load.plugin_id).collect();
+        assert_eq!(ids, vec![2, 5]);
+        let load = &batch.events[1];
+        assert_eq!(
+            load.events,
+            vec![
+                EventCount {
+                    event: "TabUpdate".to_string(),
+                    count: 1
+                },
+                EventCount {
+                    event: "Timer".to_string(),
+                    count: 2
+                },
+            ]
+        );
+        assert_eq!(load.update_time_us, 160);
+        assert_eq!((load.renders, load.render_time_us), (1, 400));
+        assert!(trace.take_batch().is_none(), "the tallies start over");
+    }
+
+    #[test]
+    fn a_trace_subscriber_has_no_events_counted() {
+        let trace = ApiTrace::default();
+        let plain: HashSet<EventType> = [EventType::Timer].into();
+        let subscriber: HashSet<EventType> = [EventType::PluginApiTrace].into();
+        assert!(!trace.counts_events_of(&plain), "the trace is off");
+        trace.set_active(true);
+        assert!(trace.counts_events_of(&plain));
+        assert!(!trace.counts_events_of(&subscriber));
     }
 
     #[test]

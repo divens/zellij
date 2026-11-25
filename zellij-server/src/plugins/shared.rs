@@ -456,6 +456,14 @@ pub fn apply_events_job(
     let mut running_plugin = running_plugin.lock().unwrap();
     let mut render = RenderResponse::Nothing;
     let strip_keybinds = subscriptions.contains(&EventType::InitialKeybinds);
+    // While the API trace runs, it tallies the events each plugin receives
+    // and the time they cost it.
+    let counter = {
+        let api_trace = &running_plugin.store.data().api_trace;
+        api_trace
+            .counts_events_of(&subscriptions)
+            .then(|| api_trace.clone())
+    };
     for (mut event, context, mut keybinds) in events {
         let Ok(event_type) = subscription_event_type(&event) else {
             continue;
@@ -504,8 +512,12 @@ pub fn apply_events_job(
         }
         let mut event = event.clone();
         super::wasm_bridge::redact_event_for_plugin(running_plugin.store.data(), &mut event);
+        let update_started = counter.is_some().then(std::time::Instant::now);
         match call_update(&mut running_plugin, &event, keybinds.as_deref(), context) {
             Ok(requested) => {
+                if let (Some(counter), Some(started)) = (&counter, update_started) {
+                    counter.record_event(instance_id, event_type, started.elapsed());
+                }
                 render = render.merge(requested);
                 if event_type == EventType::PermissionRequestResult {
                     render = render.merge(RenderResponse::All);
@@ -518,8 +530,14 @@ pub fn apply_events_job(
         }
     }
     send_pipe_changes(&senders, &mut running_plugin, instance_id, None);
+    let render_started = (counter.is_some() && !matches!(render, RenderResponse::Nothing))
+        .then(std::time::Instant::now);
     if let Err(e) = render_request(&senders, &mut running_plugin, render) {
         report_instance_error(&senders, &running_plugin, e);
+        return;
+    }
+    if let (Some(counter), Some(started)) = (&counter, render_started) {
+        counter.record_render(instance_id, started.elapsed());
     }
 }
 

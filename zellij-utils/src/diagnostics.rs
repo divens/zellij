@@ -144,8 +144,34 @@ pub struct ApiTraceBatch {
     /// Records lost since the previous batch because the server's buffer
     /// was full.
     pub dropped: u64,
+    /// How long this batch covers, in microseconds: since the previous one,
+    /// or since the trace started. For turning `events` into rates.
+    pub window_us: u64,
     /// Oldest first.
     pub records: Vec<ApiTraceRecord>,
+    /// The events each plugin received during the window, and the time it
+    /// spent on them. Ordered by plugin id.
+    pub events: Vec<PluginEventLoad>,
+}
+
+/// The events one plugin received during a trace batch's window.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginEventLoad {
+    /// For a shared plugin, the id of its one instance.
+    pub plugin_id: u32,
+    /// By event type, as `EventType` names it. Ordered by name.
+    pub events: Vec<EventCount>,
+    /// Time spent in the plugin's `update` for these events.
+    pub update_time_us: u64,
+    /// Renders the events led to, and the time spent in them.
+    pub renders: u32,
+    pub render_time_us: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventCount {
+    pub event: String,
+    pub count: u32,
 }
 
 /// One plugin command, as the server handled it.

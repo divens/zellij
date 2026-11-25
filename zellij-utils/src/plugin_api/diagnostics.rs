@@ -4,19 +4,21 @@ pub use super::generated_api::api::diagnostics::{
     ClientKind as ProtobufClientKind, DiagnosticsPaneId as ProtobufDiagnosticsPaneId,
     DiagnosticsReport as ProtobufDiagnosticsReport,
     DiagnosticsRequest as ProtobufDiagnosticsRequest,
-    DiagnosticsSection as ProtobufDiagnosticsSection,
+    DiagnosticsSection as ProtobufDiagnosticsSection, EventCount as ProtobufEventCount,
     ExecutorThreadDiagnostics as ProtobufExecutorThreadDiagnostics,
     GridDiagnostics as ProtobufGridDiagnostics, MemoryDiagnostics as ProtobufMemoryDiagnostics,
     PaneDiagnostics as ProtobufPaneDiagnostics, PluginDiagnostics as ProtobufPluginDiagnostics,
     PluginErrorKind as ProtobufPluginErrorKind, PluginErrorLog as ProtobufPluginErrorLog,
-    PluginErrorRecord as ProtobufPluginErrorRecord, QueueDiagnostics as ProtobufQueueDiagnostics,
+    PluginErrorRecord as ProtobufPluginErrorRecord, PluginEventLoad as ProtobufPluginEventLoad,
+    QueueDiagnostics as ProtobufQueueDiagnostics,
 };
 use crate::data::PaneId;
 use crate::diagnostics::{
     ApiCommandOutcome, ApiTraceBatch, ApiTraceRecord, ClientDiagnostics, ClientKind,
-    DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection, ExecutorThreadDiagnostics,
-    GridDiagnostics, MemoryDiagnostics, PaneDiagnostics, PluginDiagnostics, PluginErrorKind,
-    PluginErrorLog, PluginErrorRecord, QueueDiagnostics,
+    DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection, EventCount,
+    ExecutorThreadDiagnostics, GridDiagnostics, MemoryDiagnostics, PaneDiagnostics,
+    PluginDiagnostics, PluginErrorKind, PluginErrorLog, PluginErrorRecord, PluginEventLoad,
+    QueueDiagnostics,
 };
 
 use std::convert::TryFrom;
@@ -359,7 +361,9 @@ impl From<ProtobufApiTraceBatch> for ApiTraceBatch {
     fn from(batch: ProtobufApiTraceBatch) -> Self {
         ApiTraceBatch {
             dropped: batch.dropped,
+            window_us: batch.window_us,
             records: batch.records.into_iter().map(Into::into).collect(),
+            events: batch.events.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -368,7 +372,47 @@ impl From<ApiTraceBatch> for ProtobufApiTraceBatch {
     fn from(batch: ApiTraceBatch) -> Self {
         ProtobufApiTraceBatch {
             dropped: batch.dropped,
+            window_us: batch.window_us,
             records: batch.records.into_iter().map(Into::into).collect(),
+            events: batch.events.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ProtobufPluginEventLoad> for PluginEventLoad {
+    fn from(load: ProtobufPluginEventLoad) -> Self {
+        PluginEventLoad {
+            plugin_id: load.plugin_id,
+            events: load
+                .events
+                .into_iter()
+                .map(|count| EventCount {
+                    event: count.event,
+                    count: count.count,
+                })
+                .collect(),
+            update_time_us: load.update_time_us,
+            renders: load.renders,
+            render_time_us: load.render_time_us,
+        }
+    }
+}
+
+impl From<PluginEventLoad> for ProtobufPluginEventLoad {
+    fn from(load: PluginEventLoad) -> Self {
+        ProtobufPluginEventLoad {
+            plugin_id: load.plugin_id,
+            events: load
+                .events
+                .into_iter()
+                .map(|count| ProtobufEventCount {
+                    event: count.event,
+                    count: count.count,
+                })
+                .collect(),
+            update_time_us: load.update_time_us,
+            renders: load.renders,
+            render_time_us: load.render_time_us,
         }
     }
 }
@@ -734,6 +778,23 @@ mod tests {
     fn a_trace_batch_survives_the_wire() {
         let batch = ApiTraceBatch {
             dropped: 37,
+            window_us: 250_000,
+            events: vec![PluginEventLoad {
+                plugin_id: 7,
+                events: vec![
+                    EventCount {
+                        event: "Timer".to_string(),
+                        count: 25,
+                    },
+                    EventCount {
+                        event: "TabUpdate".to_string(),
+                        count: 2,
+                    },
+                ],
+                update_time_us: 1_200,
+                renders: 25,
+                render_time_us: 9_000,
+            }],
             records: vec![
                 ApiTraceRecord {
                     seq: 4,

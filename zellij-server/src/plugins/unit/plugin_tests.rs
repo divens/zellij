@@ -9624,7 +9624,12 @@ pub fn the_api_trace_reaches_its_subscriber_without_its_own_commands() {
         ScreenInstruction::PluginBytes(plugin_render_assets) => plugin_render_assets
             .iter()
             .map(|asset| String::from_utf8_lossy(&asset.bytes).to_string())
-            .find(|text| text.contains("command: Some(\"OpenFile\")")),
+            // The command's record and the tally of the key that caused it
+            // can come in different batches: wait for both.
+            .find(|text| {
+                text.contains("command: Some(\"OpenFile\")")
+                    && text.contains("PluginEventLoad { plugin_id: 1,")
+            }),
         _ => None,
     };
     // Not grant_permissions_and_log_actions_until!: it answers every request
@@ -9744,6 +9749,16 @@ pub fn the_api_trace_reaches_its_subscriber_without_its_own_commands() {
     assert!(
         !rendered.contains("StartWebServer"),
         "the subscriber's own command was traced: {rendered}"
+    );
+    // The other plugin's events are tallied too, the key it got among them;
+    // the subscriber's aren't.
+    assert!(
+        rendered.contains("EventCount { event: \"Key\", count: 1 }"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("PluginEventLoad { plugin_id: 0,"),
+        "the subscriber's own events were tallied: {rendered}"
     );
 }
 

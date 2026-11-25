@@ -11,9 +11,10 @@ pub use zellij_utils::data::*;
 pub use zellij_utils::desktop_integration;
 pub use zellij_utils::diagnostics::{
     ApiCommandOutcome, ApiTraceBatch, ApiTraceRecord, ClientDiagnostics, ClientKind,
-    DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection, ExecutorThreadDiagnostics,
-    GridDiagnostics, MemoryDiagnostics, PaneDiagnostics, PluginDiagnostics, PluginErrorKind,
-    PluginErrorLog, PluginErrorRecord, QueueDiagnostics,
+    DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection, EventCount,
+    ExecutorThreadDiagnostics, GridDiagnostics, MemoryDiagnostics, PaneDiagnostics,
+    PluginDiagnostics, PluginErrorKind, PluginErrorLog, PluginErrorRecord, PluginEventLoad,
+    QueueDiagnostics,
 };
 pub use zellij_utils::errors::prelude::*;
 pub use zellij_utils::input::actions;
