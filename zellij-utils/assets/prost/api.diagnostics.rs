@@ -31,6 +31,35 @@ pub struct DiagnosticsReport {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ApiTraceBatch {
+    #[prost(uint64, tag="1")]
+    pub dropped: u64,
+    #[prost(message, repeated, tag="2")]
+    pub records: ::prost::alloc::vec::Vec<ApiTraceRecord>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ApiTraceRecord {
+    #[prost(uint64, tag="1")]
+    pub seq: u64,
+    #[prost(uint64, tag="2")]
+    pub unix_time_us: u64,
+    #[prost(uint32, tag="3")]
+    pub plugin_id: u32,
+    #[prost(string, optional, tag="4")]
+    pub command: ::core::option::Option<::prost::alloc::string::String>,
+    /// Kept as a number so an outcome this build doesn't know survives decoding.
+    #[prost(enumeration="ApiCommandOutcome", tag="5")]
+    pub outcome: i32,
+    #[prost(string, optional, tag="6")]
+    pub permission: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="7")]
+    pub message: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint64, tag="8")]
+    pub duration_us: u64,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PluginErrorRecord {
     #[prost(uint64, tag="1")]
     pub unix_time_ms: u64,
@@ -293,6 +322,42 @@ impl ClientKind {
             "WebBrowser" => Some(Self::WebBrowser),
             "Watcher" => Some(Self::Watcher),
             "Cli" => Some(Self::Cli),
+            _ => None,
+        }
+    }
+}
+/// Prefixed: enum values share the package's scope with PluginErrorKind's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ApiCommandOutcome {
+    CommandOk = 0,
+    CommandFailed = 1,
+    CommandDenied = 2,
+    CommandForbidden = 3,
+    CommandUndecodable = 4,
+}
+impl ApiCommandOutcome {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            ApiCommandOutcome::CommandOk => "CommandOk",
+            ApiCommandOutcome::CommandFailed => "CommandFailed",
+            ApiCommandOutcome::CommandDenied => "CommandDenied",
+            ApiCommandOutcome::CommandForbidden => "CommandForbidden",
+            ApiCommandOutcome::CommandUndecodable => "CommandUndecodable",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CommandOk" => Some(Self::CommandOk),
+            "CommandFailed" => Some(Self::CommandFailed),
+            "CommandDenied" => Some(Self::CommandDenied),
+            "CommandForbidden" => Some(Self::CommandForbidden),
+            "CommandUndecodable" => Some(Self::CommandUndecodable),
             _ => None,
         }
     }

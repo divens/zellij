@@ -97,6 +97,7 @@ enum EventType {
     LiveViewStateChanged = 71;
     PluginSettingsEntries = 72;
     Diagnostics = 73;
+    PluginApiTrace = 74;
 }
 
 message EventNameList {
@@ -169,6 +170,7 @@ message Event {
     LiveViewStateChangedPayload live_view_state_changed_payload = 63;
     PluginSettingsEntriesPayload plugin_settings_entries_payload = 64;
     api.diagnostics.DiagnosticsReport diagnostics_payload = 65;
+    api.diagnostics.ApiTraceBatch plugin_api_trace_payload = 66;
   }
 }
 

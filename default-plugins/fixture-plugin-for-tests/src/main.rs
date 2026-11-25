@@ -363,6 +363,10 @@ impl ZellijPlugin for State {
         if diagnostics_fixture {
             permissions.push(PermissionType::ReadDiagnostics);
         }
+        let trace_fixture = configuration
+            .get("trace_fixture")
+            .map(|v| v == "true")
+            .unwrap_or(false);
         request_permission(&permissions);
         let should_subscribe_initial_keybinds = configuration
             .get("subscribe_initial_keybinds")
@@ -430,6 +434,9 @@ impl ZellijPlugin for State {
         }
         if diagnostics_fixture {
             subscribe(&[EventType::Diagnostics]);
+        }
+        if diagnostics_fixture && trace_fixture {
+            subscribe(&[EventType::PluginApiTrace]);
         }
         watch_filesystem();
     }

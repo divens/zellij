@@ -653,6 +653,8 @@ pub enum PluginContext {
     ListClientsToPlugin,
     DeliverDiagnostics,
     RecordPluginError,
+    ApiTraceSubscriptionsChanged,
+    FlushApiTrace,
     ChangePluginHostDir,
     WebServerStarted,
     FailedToStartWebServer,

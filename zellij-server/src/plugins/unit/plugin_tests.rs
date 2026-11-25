@@ -9570,6 +9570,183 @@ pub fn list_clients_plugin_command() {
     assert_snapshot!(format!("{:#?}", list_clients_instruction));
 }
 
+/// Loads the test fixture with `configuration`; the first one loaded is
+/// plugin 0, the next plugin 1, and so on.
+fn load_fixture_with(
+    plugin_thread_sender: &SenderWithContext<PluginInstruction>,
+    client_id: zellij_utils::data::ClientId,
+    configuration: &[(&str, &str)],
+) {
+    let configuration: BTreeMap<String, String> = configuration
+        .iter()
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect();
+    let run_plugin = RunPluginOrAlias::RunPlugin(RunPlugin {
+        _allow_exec_host_cmd: false,
+        location: RunPluginLocation::File(PathBuf::from(&*PLUGIN_FIXTURE)),
+        configuration: PluginUserConfiguration::new(configuration),
+        ..Default::default()
+    });
+    let _ = plugin_thread_sender.send(PluginInstruction::Load(
+        Some(false),
+        false,
+        false, // close_replaced_pane
+        Some("test_plugin".to_owned()),
+        run_plugin,
+        Some(1),
+        None,
+        client_id,
+        Size {
+            cols: 500,
+            rows: 20,
+        },
+        None,
+        None,
+        false,
+        None,
+        None,
+        None,
+    ));
+}
+
+#[test]
+#[ignore]
+pub fn the_api_trace_reaches_its_subscriber_without_its_own_commands() {
+    let temp_folder = tempdir().unwrap(); // placed explicitly in the test scope because its
+                                          // destructor removes the directory
+    let plugin_host_folder = PathBuf::from(temp_folder.path());
+    let cache_path = plugin_host_folder.join("permissions_test.kdl");
+    let (plugin_thread_sender, screen_receiver, teardown) =
+        create_plugin_thread(Some(plugin_host_folder), None);
+    let client_id = 1;
+    let received_screen_instructions = Arc::new(Mutex::new(vec![]));
+    let rendered_trace = |event: &ScreenInstruction| match event {
+        ScreenInstruction::PluginBytes(plugin_render_assets) => plugin_render_assets
+            .iter()
+            .map(|asset| String::from_utf8_lossy(&asset.bytes).to_string())
+            .find(|text| text.contains("command: Some(\"OpenFile\")")),
+        _ => None,
+    };
+    // Not grant_permissions_and_log_actions_until!: it answers every request
+    // as plugin 0, and this test has two plugins. This answers each plugin:
+    // plugin 0 asks for ReadDiagnostics and gets everything it asks for;
+    // plugin 1 doesn't, and is denied.
+    let screen_thread = std::thread::spawn({
+        let log = received_screen_instructions.clone();
+        let plugin_thread_sender = plugin_thread_sender.clone();
+        let cache_path = cache_path.clone();
+        move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            loop {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                let Ok((event, _err_ctx)) = screen_receiver.recv_timeout(remaining) else {
+                    break;
+                };
+                match event {
+                    ScreenInstruction::RequestPluginPermissions(plugin_id, request) => {
+                        let status = if request
+                            .permissions
+                            .contains(&PermissionType::ReadDiagnostics)
+                        {
+                            PermissionStatus::Granted
+                        } else {
+                            PermissionStatus::Denied
+                        };
+                        let _ =
+                            plugin_thread_sender.send(PluginInstruction::PermissionRequestResult(
+                                plugin_id,
+                                Some(client_id),
+                                request.permissions,
+                                status,
+                                Some(cache_path.clone()),
+                            ));
+                    },
+                    event => {
+                        let done = rendered_trace(&event).is_some();
+                        log.lock().unwrap().push(event);
+                        if done {
+                            break;
+                        }
+                    },
+                }
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+            }
+        }
+    });
+    let _ = plugin_thread_sender.send(PluginInstruction::AddClient(client_id));
+    load_fixture_with(
+        &plugin_thread_sender,
+        client_id,
+        &[("diagnostics_fixture", "true"), ("trace_fixture", "true")],
+    );
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    load_fixture_with(&plugin_thread_sender, client_id, &[]);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let press = |plugin_id: u32, key: KeyWithModifier| {
+        let _ = plugin_thread_sender.send(PluginInstruction::Update(vec![(
+            Some(plugin_id),
+            Some(client_id),
+            Event::Key(key),
+        )]));
+    };
+    // The subscriber's own command (start_web_server) stays out of the trace.
+    press(
+        0,
+        KeyWithModifier::new(BareKey::Char('v')).with_super_modifier(),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    // The other plugin's open_file is denied, and traced.
+    press(
+        1,
+        KeyWithModifier::new(BareKey::Char('g')).with_ctrl_modifier(),
+    );
+    screen_thread.join().unwrap(); // this might take a while if the cache is cold
+    teardown();
+    // Copied out first: searching it must not hold the lock the failure
+    // message takes again.
+    let received = received_screen_instructions.lock().unwrap().clone();
+    let rendered = received.iter().find_map(rendered_trace).unwrap_or_else(|| {
+        let renders: Vec<String> = received
+            .iter()
+            .filter_map(|event| match event {
+                ScreenInstruction::PluginBytes(assets) => Some(
+                    assets
+                        .iter()
+                        .map(|asset| {
+                            format!(
+                                "[plugin {}] {}",
+                                asset.plugin_id,
+                                String::from_utf8_lossy(&asset.bytes)
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" | "),
+                ),
+                _ => None,
+            })
+            .filter(|text| !text.trim().is_empty())
+            .collect();
+        let last = renders.last().cloned().unwrap_or_default();
+        panic!(
+            "the subscriber never rendered a trace batch with the denied OpenFile; \
+             its last render: {}",
+            &last[last.len().saturating_sub(3000)..]
+        )
+    });
+    assert!(
+        rendered.contains(
+            "plugin_id: 1, command: Some(\"OpenFile\"), outcome: Denied, permission: Some(\"OpenFiles\")"
+        ),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("StartWebServer"),
+        "the subscriber's own command was traced: {rendered}"
+    );
+}
+
 fn load_diagnostics_fixture(
     plugin_thread_sender: &SenderWithContext<PluginInstruction>,
     client_id: zellij_utils::data::ClientId,
@@ -14257,6 +14434,7 @@ fn plugin_env_without_read_pane_contents() -> super::plugin_map::PluginEnv {
             wasmi::StoreLimitsBuilder::new().build(),
         ),
         shared: None,
+        api_trace: Default::default(),
     }
 }
 

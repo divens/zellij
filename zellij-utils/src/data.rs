@@ -1379,6 +1379,8 @@ pub enum Event {
     },
     /// The answer to `request_diagnostics`, sent only to the plugin that asked.
     Diagnostics(crate::diagnostics::DiagnosticsReport),
+    /// A batch of the plugin API trace. Subscribing turns the trace on.
+    PluginApiTrace(crate::diagnostics::ApiTraceBatch),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

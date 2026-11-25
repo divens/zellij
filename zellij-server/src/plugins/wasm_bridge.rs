@@ -155,6 +155,7 @@ pub struct LoadingContext {
     pub keybinds: SharedKeybinds,
     pub plugin_dir: PathBuf,
     pub size: Size,
+    pub api_trace: super::api_trace::ApiTrace,
 }
 
 impl LoadingContext {
@@ -204,6 +205,7 @@ impl LoadingContext {
             tab_index,
             plugin_dir: wasm_bridge.plugin_dir.clone(),
             size,
+            api_trace: wasm_bridge.api_trace.clone(),
         }
     }
     pub fn update_plugin_path(&mut self, new_path: PathBuf) {
@@ -324,6 +326,7 @@ pub struct WasmBridge {
     shared_module_kinds: HashMap<String, bool>,
     settings_entries: SettingsEntries,
     plugin_errors: super::error_log::PluginErrorLogs,
+    api_trace: super::api_trace::ApiTrace,
 }
 
 impl WasmBridge {
@@ -401,6 +404,7 @@ impl WasmBridge {
             shared_module_kinds: HashMap::new(),
             settings_entries: SettingsEntries::default(),
             plugin_errors: Default::default(),
+            api_trace: Default::default(),
         }
     }
     pub fn load_plugin(
@@ -1339,6 +1343,31 @@ impl WasmBridge {
             identities.insert(*instance_id, identity);
         }
         identities
+    }
+    /// Turns the API trace on while some plugin subscribes to it, and off
+    /// when none does.
+    pub fn refresh_api_trace(&mut self) {
+        let subscribed = self
+            .plugin_map
+            .lock()
+            .unwrap()
+            .any_subscribed_to(EventType::PluginApiTrace);
+        if self.api_trace.set_active(subscribed) && subscribed {
+            self.api_trace.start_flusher(self.senders.clone());
+        }
+    }
+    /// Sends the trace records waiting to the trace's subscribers. Recounts
+    /// them first: a subscriber that unloaded (shared plugins unload on an
+    /// executor thread) turns the trace off within one flush.
+    pub fn flush_api_trace(&mut self, shutdown_sender: Sender<()>) -> Result<()> {
+        self.refresh_api_trace();
+        match self.api_trace.take_batch() {
+            Some(batch) => self.update_plugins(
+                vec![(None, None, Event::PluginApiTrace(batch))],
+                shutdown_sender,
+            ),
+            None => Ok(()),
+        }
     }
     /// An error a plugin ran into, from whichever thread hit it. A slot of
     /// a shared plugin is recorded under its instance; an error that arrives
@@ -3668,7 +3697,7 @@ pub fn check_event_permission(
         Event::PaneRenderReport(..) => PermissionType::ReadPaneContents,
         Event::LiveViewStateChanged { .. } => PermissionType::ReadPaneContents,
         Event::UserAction(..) => PermissionType::InterceptInput,
-        Event::Diagnostics(..) => PermissionType::ReadDiagnostics,
+        Event::Diagnostics(..) | Event::PluginApiTrace(..) => PermissionType::ReadDiagnostics,
         _ => return (PermissionStatus::Granted, None),
     };
 

@@ -747,6 +747,12 @@ impl TryFrom<ProtobufEvent> for Event {
                 },
                 _ => Err("Malformed payload for the Diagnostics Event"),
             },
+            Some(ProtobufEventType::PluginApiTrace) => match protobuf_event.payload {
+                Some(ProtobufEventPayload::PluginApiTracePayload(batch)) => {
+                    Ok(Event::PluginApiTrace(batch.into()))
+                },
+                _ => Err("Malformed payload for the PluginApiTrace Event"),
+            },
             Some(ProtobufEventType::LiveViewStateChanged) => match protobuf_event.payload {
                 Some(ProtobufEventPayload::LiveViewStateChangedPayload(payload)) => {
                     Ok(Event::LiveViewStateChanged {
@@ -1590,6 +1596,10 @@ impl TryFrom<Event> for ProtobufEvent {
             Event::Diagnostics(report) => Ok(ProtobufEvent {
                 name: ProtobufEventType::Diagnostics as i32,
                 payload: Some(event::Payload::DiagnosticsPayload(report.into())),
+            }),
+            Event::PluginApiTrace(batch) => Ok(ProtobufEvent {
+                name: ProtobufEventType::PluginApiTrace as i32,
+                payload: Some(event::Payload::PluginApiTracePayload(batch.into())),
             }),
             Event::LiveViewStateChanged {
                 target,
@@ -2970,6 +2980,7 @@ impl TryFrom<ProtobufEventType> for EventType {
             ProtobufEventType::DesktopIntegration => EventType::DesktopIntegration,
             ProtobufEventType::PluginSettingsEntries => EventType::PluginSettingsEntries,
             ProtobufEventType::Diagnostics => EventType::Diagnostics,
+            ProtobufEventType::PluginApiTrace => EventType::PluginApiTrace,
             ProtobufEventType::LiveViewStateChanged => EventType::LiveViewStateChanged,
             ProtobufEventType::CommandChanged => EventType::CommandChanged,
             ProtobufEventType::AvailableLayoutInfo => EventType::AvailableLayoutInfo,
@@ -3051,6 +3062,7 @@ impl TryFrom<EventType> for ProtobufEventType {
             EventType::DesktopIntegration => ProtobufEventType::DesktopIntegration,
             EventType::PluginSettingsEntries => ProtobufEventType::PluginSettingsEntries,
             EventType::Diagnostics => ProtobufEventType::Diagnostics,
+            EventType::PluginApiTrace => ProtobufEventType::PluginApiTrace,
             EventType::LiveViewStateChanged => ProtobufEventType::LiveViewStateChanged,
             EventType::CommandChanged => ProtobufEventType::CommandChanged,
             EventType::AvailableLayoutInfo => ProtobufEventType::AvailableLayoutInfo,

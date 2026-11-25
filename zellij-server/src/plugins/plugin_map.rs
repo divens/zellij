@@ -339,6 +339,19 @@ impl PluginMap {
     pub fn linear_memory_by_plugin(&mut self) -> BTreeMap<PluginId, PluginLinearMemory> {
         self.linear_memory.by_plugin()
     }
+    /// Whether any plugin instance, shared ones included, subscribes to
+    /// `event_type`.
+    pub fn any_subscribed_to(&self, event_type: EventType) -> bool {
+        self.plugin_assets
+            .values()
+            .chain(self.shared_assets.values())
+            .any(|(_, subscriptions, _)| {
+                subscriptions
+                    .lock()
+                    .map(|subscriptions| subscriptions.contains(&event_type))
+                    .unwrap_or(false)
+            })
+    }
     pub fn list_plugins(&self) -> BTreeMap<PluginId, RunPlugin> {
         let mut plugin_ids_to_cmds: BTreeMap<u32, RunPlugin> = BTreeMap::new();
         for plugin_id in self.plugin_metadata.keys() {
@@ -382,6 +395,8 @@ pub struct PluginEnv {
     pub pending_popup_size: Option<(usize, usize)>,
     pub store_limits: TrackedStoreLimits,
     pub shared: Option<SharedEnv>,
+    /// The session's plugin API trace, shared by every plugin.
+    pub api_trace: super::api_trace::ApiTrace,
 }
 
 #[derive(Debug, Clone)]

@@ -696,6 +696,12 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
     // fails: the plugin's error log keeps it (diagnostics).
     let mut command_type: Option<CommandType> = None;
     let mut forbidden = false;
+    let mut denied = false;
+    let mut denied_permission: Option<PermissionType> = None;
+    // The trace leaves out its subscribers' own commands: tracing them would
+    // feed each batch into the next.
+    let trace_started =
+        (env.api_trace.is_active() && !subscribes_to_trace(env)).then(std::time::Instant::now);
     let result = wasi_read_bytes(env)
         .and_then(|bytes| {
             let command: ProtobufPluginCommand = ProtobufPluginCommand::decode(bytes.as_slice())?;
@@ -1545,6 +1551,8 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
                     },
                 },
                 (PermissionStatus::Denied, permission) => {
+                    denied = true;
+                    denied_permission = permission;
                     log::error!(
                         "Plugin '{}' permission '{}' denied - Command '{:?}' denied",
                         env.name(),
@@ -1565,8 +1573,8 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
             };
             Ok(())
         });
-    if let Err(error) = &result {
-        use zellij_utils::diagnostics::PluginErrorKind;
+    use zellij_utils::diagnostics::{ApiCommandOutcome, PluginErrorKind};
+    let failure = result.as_ref().err().map(|error| {
         let kind = if forbidden {
             PluginErrorKind::Forbidden
         } else if command_type.is_none() {
@@ -1574,13 +1582,36 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
         } else {
             PluginErrorKind::Failed
         };
+        (kind, format!("{error:#}"))
+    });
+    if let Some((kind, message)) = &failure {
         super::error_log::report(
             &env.senders,
             env.plugin_id,
-            kind,
+            *kind,
             command_type,
             None,
-            format!("{error:#}"),
+            message.clone(),
+        );
+    }
+    if let Some(started) = trace_started {
+        let outcome = match &failure {
+            Some((PluginErrorKind::Forbidden, _)) => ApiCommandOutcome::Forbidden,
+            Some((PluginErrorKind::Undecodable, _)) => ApiCommandOutcome::Undecodable,
+            Some(_) => ApiCommandOutcome::Failed,
+            None if denied => ApiCommandOutcome::Denied,
+            None => ApiCommandOutcome::Ok,
+        };
+        env.api_trace.record(
+            &env.senders,
+            env.plugin_id,
+            command_type,
+            super::api_trace::CommandOutcome {
+                outcome,
+                permission: denied_permission,
+                message: failure.map(|(_, message)| message),
+            },
+            started,
         );
     }
     result
@@ -1588,11 +1619,24 @@ fn host_run_plugin_command(mut caller: Caller<'_, PluginEnv>) {
         .non_fatal();
 }
 
+fn subscribes_to_trace(env: &PluginEnv) -> bool {
+    env.subscriptions
+        .lock()
+        .map(|subscriptions| subscriptions.contains(&EventType::PluginApiTrace))
+        .unwrap_or(false)
+}
+
 fn subscribe(env: &PluginEnv, event_list: HashSet<EventType>) -> Result<()> {
     env.subscriptions
         .lock()
         .to_anyhow()?
         .extend(event_list.clone());
+    if event_list.contains(&EventType::PluginApiTrace) {
+        // Subscribing to the trace turns it on.
+        let _ = env
+            .senders
+            .send_to_plugin(PluginInstruction::ApiTraceSubscriptionsChanged);
+    }
     if event_list.contains(&EventType::SessionCountsUpdate)
         || event_list.contains(&EventType::FolderSessionsUpdate)
     {
@@ -1666,6 +1710,12 @@ fn unsubscribe(env: &PluginEnv, event_list: HashSet<EventType>) -> Result<()> {
         subscriptions.contains(&EventType::SessionCountsUpdate)
             || subscriptions.contains(&EventType::FolderSessionsUpdate)
     };
+    if event_list.contains(&EventType::PluginApiTrace) {
+        // After the change, so the plugin thread sees it when it recounts.
+        let _ = env
+            .senders
+            .send_to_plugin(PluginInstruction::ApiTraceSubscriptionsChanged);
+    }
     if !still_subscribed_to_sessions
         && (event_list.contains(&EventType::SessionCountsUpdate)
             || event_list.contains(&EventType::FolderSessionsUpdate))

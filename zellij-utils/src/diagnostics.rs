@@ -136,6 +136,52 @@ pub struct DiagnosticsReport {
     pub plugin_errors: Vec<PluginErrorLog>,
 }
 
+/// A batch of the plugin API trace, pushed to plugins subscribed to
+/// `PluginApiTrace`. The trace runs only while some plugin subscribes, and
+/// leaves out the subscribers' own commands.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiTraceBatch {
+    /// Records lost since the previous batch because the server's buffer
+    /// was full.
+    pub dropped: u64,
+    /// Oldest first.
+    pub records: Vec<ApiTraceRecord>,
+}
+
+/// One plugin command, as the server handled it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiTraceRecord {
+    /// Counts up through the session; a gap means records were dropped.
+    pub seq: u64,
+    /// When the command arrived, in microseconds since the Unix epoch.
+    pub unix_time_us: u64,
+    /// For a shared plugin, the id of its one instance.
+    pub plugin_id: u32,
+    /// The command's type, as `CommandType` names it. `None` when the
+    /// server couldn't read the command.
+    pub command: Option<String>,
+    pub outcome: ApiCommandOutcome,
+    /// For a denial, the permission the command needs.
+    pub permission: Option<String>,
+    /// For a failure, what went wrong, on one line.
+    pub message: Option<String>,
+    /// How long the server took to handle the command. Work it handed to
+    /// other threads isn't included.
+    pub duration_us: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApiCommandOutcome {
+    #[default]
+    Ok,
+    Failed,
+    Denied,
+    Forbidden,
+    Undecodable,
+    /// An outcome this build doesn't know, by its wire number.
+    Unknown(i32),
+}
+
 /// What went wrong.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginErrorKind {

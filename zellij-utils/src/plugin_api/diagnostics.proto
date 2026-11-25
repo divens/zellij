@@ -46,6 +46,32 @@ message DiagnosticsReport {
   repeated PluginErrorLog plugin_errors = 9;
 }
 
+// Prefixed: enum values share the package's scope with PluginErrorKind's.
+enum ApiCommandOutcome {
+  CommandOk = 0;
+  CommandFailed = 1;
+  CommandDenied = 2;
+  CommandForbidden = 3;
+  CommandUndecodable = 4;
+}
+
+message ApiTraceBatch {
+  uint64 dropped = 1;
+  repeated ApiTraceRecord records = 2;
+}
+
+message ApiTraceRecord {
+  uint64 seq = 1;
+  uint64 unix_time_us = 2;
+  uint32 plugin_id = 3;
+  optional string command = 4;
+  // Kept as a number so an outcome this build doesn't know survives decoding.
+  ApiCommandOutcome outcome = 5;
+  optional string permission = 6;
+  optional string message = 7;
+  uint64 duration_us = 8;
+}
+
 message PluginErrorRecord {
   uint64 unix_time_ms = 1;
   // Kept as a number so a kind this build doesn't know survives decoding.

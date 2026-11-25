@@ -1,6 +1,8 @@
 pub use super::generated_api::api::diagnostics::{
-    ClientDiagnostics as ProtobufClientDiagnostics, ClientKind as ProtobufClientKind,
-    DiagnosticsPaneId as ProtobufDiagnosticsPaneId, DiagnosticsReport as ProtobufDiagnosticsReport,
+    ApiCommandOutcome as ProtobufApiCommandOutcome, ApiTraceBatch as ProtobufApiTraceBatch,
+    ApiTraceRecord as ProtobufApiTraceRecord, ClientDiagnostics as ProtobufClientDiagnostics,
+    ClientKind as ProtobufClientKind, DiagnosticsPaneId as ProtobufDiagnosticsPaneId,
+    DiagnosticsReport as ProtobufDiagnosticsReport,
     DiagnosticsRequest as ProtobufDiagnosticsRequest,
     DiagnosticsSection as ProtobufDiagnosticsSection,
     ExecutorThreadDiagnostics as ProtobufExecutorThreadDiagnostics,
@@ -11,9 +13,10 @@ pub use super::generated_api::api::diagnostics::{
 };
 use crate::data::PaneId;
 use crate::diagnostics::{
-    ClientDiagnostics, ClientKind, DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection,
-    ExecutorThreadDiagnostics, GridDiagnostics, MemoryDiagnostics, PaneDiagnostics,
-    PluginDiagnostics, PluginErrorKind, PluginErrorLog, PluginErrorRecord, QueueDiagnostics,
+    ApiCommandOutcome, ApiTraceBatch, ApiTraceRecord, ClientDiagnostics, ClientKind,
+    DiagnosticsReport, DiagnosticsRequest, DiagnosticsSection, ExecutorThreadDiagnostics,
+    GridDiagnostics, MemoryDiagnostics, PaneDiagnostics, PluginDiagnostics, PluginErrorKind,
+    PluginErrorLog, PluginErrorRecord, QueueDiagnostics,
 };
 
 use std::convert::TryFrom;
@@ -296,6 +299,76 @@ impl From<ClientDiagnostics> for ProtobufClientDiagnostics {
             output_backlog_limit: client.output_backlog_limit,
             last_frame_ack_us: client.last_frame_ack_us,
             frame_awaiting_ack_us: client.frame_awaiting_ack_us,
+        }
+    }
+}
+
+fn decode_outcome(value: i32) -> ApiCommandOutcome {
+    match ProtobufApiCommandOutcome::try_from(value) {
+        Ok(ProtobufApiCommandOutcome::CommandOk) => ApiCommandOutcome::Ok,
+        Ok(ProtobufApiCommandOutcome::CommandFailed) => ApiCommandOutcome::Failed,
+        Ok(ProtobufApiCommandOutcome::CommandDenied) => ApiCommandOutcome::Denied,
+        Ok(ProtobufApiCommandOutcome::CommandForbidden) => ApiCommandOutcome::Forbidden,
+        Ok(ProtobufApiCommandOutcome::CommandUndecodable) => ApiCommandOutcome::Undecodable,
+        Err(_) => ApiCommandOutcome::Unknown(value),
+    }
+}
+
+fn encode_outcome(outcome: ApiCommandOutcome) -> i32 {
+    match outcome {
+        ApiCommandOutcome::Ok => ProtobufApiCommandOutcome::CommandOk as i32,
+        ApiCommandOutcome::Failed => ProtobufApiCommandOutcome::CommandFailed as i32,
+        ApiCommandOutcome::Denied => ProtobufApiCommandOutcome::CommandDenied as i32,
+        ApiCommandOutcome::Forbidden => ProtobufApiCommandOutcome::CommandForbidden as i32,
+        ApiCommandOutcome::Undecodable => ProtobufApiCommandOutcome::CommandUndecodable as i32,
+        ApiCommandOutcome::Unknown(value) => value,
+    }
+}
+
+impl From<ProtobufApiTraceRecord> for ApiTraceRecord {
+    fn from(record: ProtobufApiTraceRecord) -> Self {
+        ApiTraceRecord {
+            seq: record.seq,
+            unix_time_us: record.unix_time_us,
+            plugin_id: record.plugin_id,
+            command: record.command,
+            outcome: decode_outcome(record.outcome),
+            permission: record.permission,
+            message: record.message,
+            duration_us: record.duration_us,
+        }
+    }
+}
+
+impl From<ApiTraceRecord> for ProtobufApiTraceRecord {
+    fn from(record: ApiTraceRecord) -> Self {
+        ProtobufApiTraceRecord {
+            seq: record.seq,
+            unix_time_us: record.unix_time_us,
+            plugin_id: record.plugin_id,
+            command: record.command,
+            outcome: encode_outcome(record.outcome),
+            permission: record.permission,
+            message: record.message,
+            duration_us: record.duration_us,
+        }
+    }
+}
+
+impl From<ProtobufApiTraceBatch> for ApiTraceBatch {
+    fn from(batch: ProtobufApiTraceBatch) -> Self {
+        ApiTraceBatch {
+            dropped: batch.dropped,
+            records: batch.records.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<ApiTraceBatch> for ProtobufApiTraceBatch {
+    fn from(batch: ApiTraceBatch) -> Self {
+        ProtobufApiTraceBatch {
+            dropped: batch.dropped,
+            records: batch.records.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -654,6 +727,43 @@ mod tests {
         assert_eq!(
             ProtobufPluginErrorRecord::from(decoded).kind,
             FUTURE_SECTION
+        );
+    }
+
+    #[test]
+    fn a_trace_batch_survives_the_wire() {
+        let batch = ApiTraceBatch {
+            dropped: 37,
+            records: vec![
+                ApiTraceRecord {
+                    seq: 4,
+                    unix_time_us: 1_795_547_345_498_123,
+                    plugin_id: 7,
+                    command: Some("RunCommand".to_string()),
+                    outcome: ApiCommandOutcome::Denied,
+                    permission: Some("RunCommands".to_string()),
+                    message: None,
+                    duration_us: 12,
+                },
+                ApiTraceRecord {
+                    seq: 5,
+                    command: None,
+                    outcome: ApiCommandOutcome::Undecodable,
+                    message: Some("failed to convert serialized command".to_string()),
+                    ..Default::default()
+                },
+            ],
+        };
+        let bytes = ProtobufApiTraceBatch::from(batch.clone()).encode_to_vec();
+        let decoded = ProtobufApiTraceBatch::decode(bytes.as_slice()).unwrap();
+        assert_eq!(ApiTraceBatch::from(decoded), batch);
+        let future = ProtobufApiTraceRecord {
+            outcome: FUTURE_SECTION,
+            ..Default::default()
+        };
+        assert_eq!(
+            ApiTraceRecord::from(future).outcome,
+            ApiCommandOutcome::Unknown(FUTURE_SECTION)
         );
     }
 

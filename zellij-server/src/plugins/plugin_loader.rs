@@ -78,6 +78,7 @@ pub struct PluginLoader<'a> {
     keybinds: SharedKeybinds,
     plugin_dir: PathBuf,
     size: Size,
+    api_trace: super::api_trace::ApiTrace,
     loading_indication: LoadingIndication,
     senders: ThreadSenders,
     engine: Engine,
@@ -119,6 +120,7 @@ impl<'a> PluginLoader<'a> {
             keybinds: loading_context.keybinds,
             plugin_dir: loading_context.plugin_dir,
             size: loading_context.size,
+            api_trace: loading_context.api_trace,
 
             skip_cache,
             senders,
@@ -333,6 +335,7 @@ impl<'a> PluginLoader<'a> {
             stdout_pipe,
             store_limits: TrackedStoreLimits::new(create_optimized_store_limits()),
             shared: None,
+            api_trace: self.api_trace.clone(),
         };
         let mut store = Store::new(&self.engine, plugin_env);
 
@@ -446,6 +449,7 @@ impl<'a> PluginLoader<'a> {
             stdout_pipe,
             store_limits: TrackedStoreLimits::new(create_optimized_store_limits()),
             shared: None,
+            api_trace: self.api_trace.clone(),
         };
         let mut store = Store::new(&self.engine, plugin_env);
 

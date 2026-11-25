@@ -1,3 +1,4 @@
+mod api_trace;
 mod error_log;
 mod linear_memory;
 mod pinned_executor;
@@ -243,6 +244,10 @@ pub enum PluginInstruction {
     ListClientsToPlugin(SessionLayoutMetadata, PluginId, ClientId),
     DeliverDiagnostics(DiagnosticsReport, DiagnosticsReplyTo),
     RecordPluginError(PluginId, zellij_utils::diagnostics::PluginErrorRecord),
+    /// A plugin subscribed to or unsubscribed from `PluginApiTrace`.
+    ApiTraceSubscriptionsChanged,
+    /// Send the trace records waiting to the trace's subscribers.
+    FlushApiTrace,
     ChangePluginHostDir(PathBuf, PluginId, ClientId),
     WebServerStarted(String), // String -> the base url of the web server
     FailedToStartWebServer(String),
@@ -359,6 +364,10 @@ impl From<&PluginInstruction> for PluginContext {
             PluginInstruction::ListClientsToPlugin(..) => PluginContext::ListClientsToPlugin,
             PluginInstruction::DeliverDiagnostics(..) => PluginContext::DeliverDiagnostics,
             PluginInstruction::RecordPluginError(..) => PluginContext::RecordPluginError,
+            PluginInstruction::ApiTraceSubscriptionsChanged => {
+                PluginContext::ApiTraceSubscriptionsChanged
+            },
+            PluginInstruction::FlushApiTrace => PluginContext::FlushApiTrace,
             PluginInstruction::ChangePluginHostDir(..) => PluginContext::ChangePluginHostDir,
             PluginInstruction::WebServerStarted(..) => PluginContext::WebServerStarted,
             PluginInstruction::FailedToStartWebServer(..) => PluginContext::FailedToStartWebServer,
@@ -1128,6 +1137,12 @@ pub(crate) fn plugin_thread_main(
             },
             PluginInstruction::RecordPluginError(plugin_id, record) => {
                 wasm_bridge.record_plugin_error(plugin_id, record);
+            },
+            PluginInstruction::ApiTraceSubscriptionsChanged => {
+                wasm_bridge.refresh_api_trace();
+            },
+            PluginInstruction::FlushApiTrace => {
+                wasm_bridge.flush_api_trace(shutdown_send.clone())?;
             },
             PluginInstruction::DeliverDiagnostics(mut report, reply_to) => {
                 wasm_bridge.fill_diagnostics(&mut report);
